@@ -1,0 +1,75 @@
+	
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+@theme inline {
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+
+  --color-background: #000000;
+  --color-foreground: #ffffff;
+  --color-primary: #8b5cf6;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #1a1a1a;
+  --color-secondary-foreground: #ffffff;
+  --color-accent: #a78bfa;
+  --color-accent-foreground: #000000;
+  --color-muted: #262626;
+  --color-muted-foreground: #a3a3a3;
+  --color-border: #262626;
+  --color-input: #262626;
+  --color-ring: #8b5cf6;
+
+  --radius: 0.5rem;
+}
+
+/* Design system utilities */
+@layer components {
+  .btn-gradient {
+    @apply bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white px-8 py-4 rounded-lg font-semibold transition-all duration-200 shadow-lg shadow-purple-600/30 hover:shadow-purple-600/50 hover:scale-105;
+  }
+
+  .btn-ghost {
+    @apply bg-white/5 hover:bg-white/10 text-white border border-white/10 px-8 py-4 rounded-lg font-semibold transition-all duration-200;
+  }
+
+  .card-glass {
+    @apply bg-gradient-to-b from-white/5 to-white/0 border border-white/10 rounded-2xl;
+  }
+
+  .heading-gradient {
+    @apply text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600;
+  }
+
+  .chip {
+    @apply inline-block px-4 py-2 bg-purple-600/20 border border-purple-500/30 rounded text-purple-400 text-lg font-medium;
+  }
+
+  .nav-link {
+    @apply text-gray-300 hover:text-white transition-colors duration-200 hover:underline underline-offset-8;
+  }
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+#root {
+  min-height: 100vh;
+}
