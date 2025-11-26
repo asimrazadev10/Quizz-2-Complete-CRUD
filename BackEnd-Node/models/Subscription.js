@@ -34,8 +34,16 @@ const SubscriptionSchema = new Schema(
   { timestamps: true }
 );
 
-SubscriptionSchema.virtual("formattedPrice").get(function () {
-  return `${this.currency} ${this.amount}`;
+SubscriptionSchema.pre("findOneAndDelete", async function (next) {
+  const doc = await this.model.findOne(this.getFilter());
+
+  if (doc) {
+    await mongoose.model("Invoice").deleteMany({ subscriptionId: doc._id });
+    await mongoose.model("SubscriptionClient").deleteMany({ subscriptionId: doc._id });
+    await mongoose.model("Alert").deleteMany({ subscriptionId: doc._id });
+  }
+
+  next();
 });
 
 export default mongoose.model("Subscription", SubscriptionSchema);

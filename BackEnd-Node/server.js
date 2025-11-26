@@ -7,6 +7,15 @@ import connectToMongo from "./db.js";
 
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
+import subscriptionRoutes from "./routes/subscriptions.js";
+import workspaceRoutes from "./routes/workspaces.js";
+import planRoutes from "./routes/plans.js";
+import clientRoutes from "./routes/clients.js";
+import budgetRoutes from "./routes/budgets.js";
+import subscriptionClientRoutes from "./routes/subscriptionClients.js";
+import alertRoutes from "./routes/alerts.js";
+import invoiceRoutes from "./routes/invoices.js";
+import userPlanRoutes from "./routes/userPlans.js";
 
 dotenv.config();
 
@@ -25,6 +34,15 @@ app.get("/api/health", (_req, res) =>
 );
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/subscriptions", subscriptionRoutes);
+app.use("/api/workspaces", workspaceRoutes);
+app.use("/api/plans", planRoutes);
+app.use("/api/clients", clientRoutes);
+app.use("/api/budgets", budgetRoutes);
+app.use("/api/subscriptionClients", subscriptionClientRoutes);
+app.use("/api/alerts", alertRoutes);
+app.use("/api/invoices", invoiceRoutes);
+app.use("/api/userPlans", userPlanRoutes);
 
 const PORT = process.env.PORT;
 

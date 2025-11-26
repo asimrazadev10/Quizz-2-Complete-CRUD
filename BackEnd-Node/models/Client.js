@@ -1,16 +1,6 @@
 import mongoose from "mongoose";
 const { Schema } = mongoose;
 
-// Sub-schema for cleaner structure
-const ContactInfoSchema = new Schema(
-  {
-    name: String,
-    email: { type: String, lowercase: true, trim: true },
-    phone: String,
-  },
-  { _id: false }
-);
-
 const ClientSchema = new Schema(
   {
     workspaceId: {
@@ -19,7 +9,7 @@ const ClientSchema = new Schema(
       required: true,
     },
     name: { type: String, required: true },
-    contact: ContactInfoSchema, // Embedded sub-document
+    contact: { type: String },
     notes: { type: String },
   },
   { timestamps: true }

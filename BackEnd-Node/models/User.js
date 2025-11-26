@@ -31,4 +31,15 @@ const UserSchema = new Schema(
 
 UserSchema.index({ username: "text", name: "text" });
 
+UserSchema.pre("findOneAndDelete", async function (next) {
+  const doc = await this.model.findOne(this.getFilter());
+
+  if (doc) {
+    await mongoose.model("Workspace").deleteMany({ userId: doc._id });
+    await mongoose.model("UserPlan").deleteMany({ userId: doc._id });
+  }
+
+  next();
+});
+
 export default mongoose.model("User", UserSchema);
