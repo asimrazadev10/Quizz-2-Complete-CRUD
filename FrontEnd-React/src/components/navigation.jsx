@@ -1,18 +1,12 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 
 export default function Navigation() {
   const [isOpen, setIsOpen] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  useEffect(() => {
-    const token = localStorage.getItem("token");
-    if (token && !isLoggedIn) {
-      setIsLoggedIn(true);
-    }
-  }, []);
-
-  // Listen for auth changes (login/logout) and storage events from other tabs
   useEffect(() => {
     const checkAuth = () => {
       const token = localStorage.getItem("token");
@@ -28,7 +22,6 @@ export default function Navigation() {
     window.addEventListener("storage", onStorage);
     window.addEventListener("authChanged", onAuthChanged);
 
-    // initial sync
     checkAuth();
 
     return () => {
@@ -36,6 +29,16 @@ export default function Navigation() {
       window.removeEventListener("authChanged", onAuthChanged);
     };
   }, []);
+
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    setIsLoggedIn(false);
+    window.dispatchEvent(new Event("authChanged"));
+    navigate("/");
+    setIsOpen(false);
+  };
+
+  const isActive = (path) => location.pathname === path;
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-black/60 backdrop-blur-xl border-b border-white/10">
@@ -54,33 +57,63 @@ export default function Navigation() {
           {/* Desktop Navigation */}
           <div className="hidden md:block">
             <div className="ml-10 flex items-center space-x-8">
-              <Link to="/" className="nav-link">
+              <Link 
+                to="/" 
+                className={`nav-link ${isActive('/') ? 'text-white underline' : ''}`}
+              >
                 Home
               </Link>
-              <Link to="/dashboard" className="nav-link">
-                Dashboard
-              </Link>
-              <Link to="/about" className="nav-link">
-                About
-              </Link>
-              <Link to="/services" className="nav-link">
-                Services
-              </Link>
-              <Link to="/contact" className="nav-link">
-                Contact
-              </Link>
-              {!isLoggedIn && (
-                <Link to="/login" className="nav-link">
-                  Login
+              {isLoggedIn && (
+                <Link 
+                  to="/dashboard" 
+                  className={`nav-link ${isActive('/dashboard') ? 'text-white underline' : ''}`}
+                >
+                  Dashboard
                 </Link>
               )}
-              {!isLoggedIn && (
-                <Link
-                  to="/register"
-                  className="btn-gradient px-6 py-2 font-medium"
-                >
-                  Get Started
-                </Link>
+              <Link 
+                to="/about" 
+                className={`nav-link ${isActive('/about') ? 'text-white underline' : ''}`}
+              >
+                About
+              </Link>
+              <Link 
+                to="/services" 
+                className={`nav-link ${isActive('/services') ? 'text-white underline' : ''}`}
+              >
+                Services
+              </Link>
+              <Link 
+                to="/contact" 
+                className={`nav-link ${isActive('/contact') ? 'text-white underline' : ''}`}
+              >
+                Contact
+              </Link>
+              {isLoggedIn ? (
+                <div className="flex items-center space-x-4">
+                  <span className="text-gray-300">Welcome!</span>
+                  <button 
+                    onClick={handleLogout}
+                    className="text-gray-300 hover:text-white transition-colors duration-200 hover:underline"
+                  >
+                    Logout
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <Link 
+                    to="/login" 
+                    className={`nav-link ${isActive('/login') ? 'text-white underline' : ''}`}
+                  >
+                    Login
+                  </Link>
+                  <Link
+                    to="/register"
+                    className="btn-gradient px-6 py-2 font-medium"
+                  >
+                    Get Started
+                  </Link>
+                </>
               )}
             </div>
           </div>
@@ -122,13 +155,15 @@ export default function Navigation() {
             >
               Home
             </Link>
-            <Link
-              to="/dashboard"
-              className="block px-3 py-2 nav-link hover:bg-white/5 rounded-md"
-              onClick={() => setIsOpen(false)}
-            >
-              Dashboard
-            </Link>
+            {isLoggedIn && (
+              <Link
+                to="/dashboard"
+                className="block px-3 py-2 nav-link hover:bg-white/5 rounded-md"
+                onClick={() => setIsOpen(false)}
+              >
+                Dashboard
+              </Link>
+            )}
             <Link
               to="/about"
               className="block px-3 py-2 nav-link hover:bg-white/5 rounded-md"
@@ -150,7 +185,14 @@ export default function Navigation() {
             >
               Contact
             </Link>
-            {!isLoggedIn && (
+            {isLoggedIn ? (
+              <button 
+                onClick={handleLogout}
+                className="block w-full text-left px-3 py-2 nav-link hover:bg-white/5 rounded-md"
+              >
+                Logout
+              </button>
+            ) : (
               <>
                 <Link
                   to="/login"
