@@ -4,6 +4,7 @@ import Invoice from "../models/Invoice.js";
 import SubscriptionClient from "../models/SubscriptionClient.js";
 import sanitizeInput from "../utils/sanitizeInput.js";
 import { validationResult } from "express-validator";
+import alertService from "../services/alertService.js";
 
 const createSubscription = async (req, res) => {
   const data = req.body;
@@ -40,6 +41,15 @@ const createSubscription = async (req, res) => {
       notes: sanitizeInput(data.notes),
       tags: Array.isArray(data.tags) ? data.tags.map(sanitizeInput) : [],
     });
+
+    // Trigger alert checks after creating subscription (for immediate alerts)
+    if (subscription.nextRenewalDate) {
+      setTimeout(() => {
+        alertService.checkDeadlineAlerts().catch(err => 
+          console.error("Error checking alerts after subscription creation:", err)
+        );
+      }, 1000);
+    }
 
     return res.json({
       status: 201,
@@ -121,6 +131,10 @@ const updateSubscription = async (req, res) => {
         .status(403)
         .json({ message: "Not allowed to update subscription" });
 
+    const newRenewalDate = data.nextRenewalDate
+      ? new Date(data.nextRenewalDate)
+      : sub.nextRenewalDate;
+
     const updated = await Subscription.findByIdAndUpdate(
       id,
       {
@@ -130,9 +144,7 @@ const updateSubscription = async (req, res) => {
         amount: Number(data.amount),
         currency: sanitizeInput(data.currency),
         period: data.period,
-        nextRenewalDate: data.nextRenewalDate
-          ? new Date(data.nextRenewalDate)
-          : sub.nextRenewalDate,
+        nextRenewalDate: newRenewalDate,
         category: sanitizeInput(data.category),
         notes: sanitizeInput(data.notes),
         tags: Array.isArray(data.tags)
@@ -141,6 +153,15 @@ const updateSubscription = async (req, res) => {
       },
       { new: true }
     );
+
+    // Trigger alert checks after updating subscription (for immediate alerts)
+    if (updated.nextRenewalDate) {
+      setTimeout(() => {
+        alertService.checkDeadlineAlerts().catch(err => 
+          console.error("Error checking alerts after subscription update:", err)
+        );
+      }, 1000);
+    }
 
     return res.json({
       status: 200,

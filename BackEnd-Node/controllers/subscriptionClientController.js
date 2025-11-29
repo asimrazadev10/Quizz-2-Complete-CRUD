@@ -120,10 +120,14 @@ const getSubscriptionsForClient = async (req, res) => {
 };
 
 const unlinkClientFromSubscription = async (req, res) => {
-  const linkId = req.params.id;
+  const data = req.body;
 
   try {
-    const link = await SubscriptionClient.findById(linkId);
+    const link = await SubscriptionClient.findOne({
+      subscriptionId: data.subscriptionId,
+      clientId: data.clientId,
+    });
+
     if (!link) return res.status(404).json({ message: "Link not found" });
 
     const subscription = await Subscription.findById(link.subscriptionId);
@@ -136,7 +140,7 @@ const unlinkClientFromSubscription = async (req, res) => {
     if (!ws)
       return res.status(403).json({ message: "Not allowed to remove link" });
 
-    await SubscriptionClient.findByIdAndDelete(linkId);
+    await SubscriptionClient.findByIdAndDelete(link._id);
 
     return res.json({
       status: 200,

@@ -35,6 +35,7 @@ import {
   Save,
   Clock,
   PieChart,
+  RefreshCw,
 } from "lucide-react";
 import {
   AreaChart,
@@ -56,8 +57,12 @@ import api, {
   invoiceAPI, 
   alertAPI, 
   budgetAPI,
-  userAPI 
+  userAPI,
+  subscriptionClientAPI
 } from "../utils/api";
+import { showToast } from "../utils/toast";
+import { toast } from "sonner";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 // Currency formatter helper
 const formatCurrency = (amount, currency = 'USD') => {
@@ -91,13 +96,25 @@ const DashboardPage = () => {
   const [budgets, setBudgets] = useState([]);
   const [currentWorkspace, setCurrentWorkspace] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [subscriptionClients, setSubscriptionClients] = useState({}); // Map of subscriptionId -> array of client objects
+  const [showManageClientsModal, setShowManageClientsModal] = useState(false);
+  const [selectedSubscriptionForClients, setSelectedSubscriptionForClients] = useState(null);
+  
+  // Confirmation dialog state
+  const [confirmDialog, setConfirmDialog] = useState({
+    isOpen: false,
+    title: "",
+    message: "",
+    onConfirm: () => {},
+    confirmText: "Delete",
+    variant: "danger"
+  });
   
   // Form states
   const [showSubscriptionForm, setShowSubscriptionForm] = useState(false);
   const [showClientForm, setShowClientForm] = useState(false);
   const [showWorkspaceForm, setShowWorkspaceForm] = useState(false);
   const [showInvoiceForm, setShowInvoiceForm] = useState(false);
-  const [showAlertForm, setShowAlertForm] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   
   // Form data
@@ -112,7 +129,8 @@ const DashboardPage = () => {
     category: "",
     notes: "",
     tags: "",
-    workspaceId: ""
+    workspaceId: "",
+    clientId: "" // Add client selection
   });
   
   const [clientForm, setClientForm] = useState({
@@ -123,7 +141,8 @@ const DashboardPage = () => {
   });
   
   const [workspaceForm, setWorkspaceForm] = useState({
-    name: ""
+    name: "",
+    monthlyCap: ""
   });
   
   const [invoiceForm, setInvoiceForm] = useState({
@@ -135,12 +154,6 @@ const DashboardPage = () => {
     source: "upload"
   });
 
-  const [alertForm, setAlertForm] = useState({
-    subscriptionId: "",
-    type: "renewal",
-    dueDate: "",
-    sentAt: ""
-  });
 
   const [budgetForm, setBudgetForm] = useState({
     monthlyCap: "",
@@ -157,6 +170,29 @@ const DashboardPage = () => {
     if (currentWorkspace) {
       fetchWorkspaceData();
     }
+  }, [currentWorkspace]);
+
+  // Auto-refresh alerts every 5 minutes to catch automatic alerts
+  useEffect(() => {
+    if (!currentWorkspace) return;
+
+    const refreshAlerts = async () => {
+      try {
+        const alertResponse = await alertAPI.getByWorkspace(currentWorkspace._id);
+        setAlerts(alertResponse.data || []);
+      } catch (error) {
+        console.error("Error refreshing alerts:", error);
+      }
+    };
+
+    // Refresh immediately
+    refreshAlerts();
+
+    // Set up interval to refresh every 5 minutes (300000 ms)
+    const interval = setInterval(refreshAlerts, 5 * 60 * 1000);
+
+    // Cleanup interval on unmount or workspace change
+    return () => clearInterval(interval);
   }, [currentWorkspace]);
 
   const fetchUserData = async () => {
@@ -217,22 +253,47 @@ const DashboardPage = () => {
       }
       setInvoices(allInvoices);
       
-      // Fetch alerts for all subscriptions
-      const allAlerts = [];
+      // Fetch alerts for workspace (more efficient than per-subscription)
+      try {
+        const alertResponse = await alertAPI.getByWorkspace(currentWorkspace._id);
+        console.log("Fetched alerts:", alertResponse.data);
+        setAlerts(alertResponse.data || []);
+      } catch (error) {
+        console.error("Error fetching alerts:", error);
+        setAlerts([]);
+      }
+      
+      // Fetch clients for each subscription
+      const clientsMap = {};
       for (const sub of subsResponse.data) {
         try {
-          const alertResponse = await alertAPI.getBySubscription(sub._id);
-          allAlerts.push(...alertResponse.data);
+          const clientsResponse = await subscriptionClientAPI.getClientsForSubscription(sub._id);
+          // The API returns links with populated clientId objects
+          clientsMap[sub._id] = clientsResponse.data.map(link => link.clientId || link);
         } catch (error) {
-          console.error(`Error fetching alerts for subscription ${sub._id}:`, error);
+          console.error(`Error fetching clients for subscription ${sub._id}:`, error);
+          clientsMap[sub._id] = [];
         }
       }
-      setAlerts(allAlerts);
+      setSubscriptionClients(clientsMap);
       
     } catch (error) {
       console.error("Error fetching workspace data:", error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchClientsForSubscription = async (subscriptionId) => {
+    try {
+      const clientsResponse = await subscriptionClientAPI.getClientsForSubscription(subscriptionId);
+      // The API returns links with populated clientId objects
+      setSubscriptionClients(prev => ({
+        ...prev,
+        [subscriptionId]: clientsResponse.data.map(link => link.clientId || link)
+      }));
+    } catch (error) {
+      console.error(`Error fetching clients for subscription ${subscriptionId}:`, error);
     }
   };
   
@@ -242,7 +303,7 @@ const DashboardPage = () => {
     e.preventDefault();
   
     if (!currentWorkspace || !currentWorkspace._id) {
-      alert("Please select or create a workspace before adding a subscription.");
+      showToast.warning("Workspace Required", "Please select or create a workspace before adding a subscription.");
       return;
     }
   
@@ -260,18 +321,50 @@ const DashboardPage = () => {
           : null,
       };
   
-      const response = await subscriptionAPI.create(formData);
+      const { clientId, ...subscriptionData } = formData;
+      const response = await subscriptionAPI.create(subscriptionData);
       if (response.data.subscription) {
-        setSubscriptions((prev) => [...prev, response.data.subscription]);
+        const newSubscription = response.data.subscription;
+        setSubscriptions((prev) => [...prev, newSubscription]);
+        
+        // Link client if selected
+        if (clientId) {
+          try {
+            await subscriptionClientAPI.linkClient({
+              subscriptionId: newSubscription._id,
+              clientId: clientId
+            });
+            // Refresh subscription clients
+            await fetchClientsForSubscription(newSubscription._id);
+          } catch (error) {
+            console.error("Error linking client to subscription:", error);
+          }
+        }
+        
+        showToast.success("Subscription Created", `${newSubscription.name} has been added successfully!`);
         setShowSubscriptionForm(false);
         resetSubscriptionForm();
-        fetchWorkspaceData();
+        // Refresh workspace data and trigger alert checks
+        await fetchWorkspaceData();
+        // Trigger alert checks after creating subscription
+        try {
+          await alertAPI.triggerChecks();
+          // Wait a bit then refresh alerts
+          setTimeout(async () => {
+            if (currentWorkspace) {
+              const alertResponse = await alertAPI.getByWorkspace(currentWorkspace._id);
+              setAlerts(alertResponse.data || []);
+            }
+          }, 2000);
+        } catch (error) {
+          console.error("Error triggering alert checks:", error);
+        }
       }
     } catch (error) {
       console.error("Error creating subscription:", error);
-      alert(
-        "Error creating subscription: " +
-          (error.response?.data?.message || error.message)
+      showToast.error(
+        "Error Creating Subscription",
+        error.response?.data?.message || error.message
       );
     }
   };
@@ -281,7 +374,7 @@ const DashboardPage = () => {
     e.preventDefault();
   
     if (!editingItem || !editingItem._id) {
-      alert("No subscription selected for editing.");
+      showToast.warning("No Selection", "No subscription selected for editing.");
       return;
     }
   
@@ -306,44 +399,74 @@ const DashboardPage = () => {
             sub._id === editingItem._id ? response.data.subscription : sub
           )
         );
+        showToast.success("Subscription Updated", `${response.data.subscription.name} has been updated successfully!`);
         setShowSubscriptionForm(false);
         setEditingItem(null);
         resetSubscriptionForm();
+        // Trigger alert checks after updating subscription
+        try {
+          await alertAPI.triggerChecks();
+          // Wait a bit then refresh alerts
+          setTimeout(async () => {
+            if (currentWorkspace) {
+              const alertResponse = await alertAPI.getByWorkspace(currentWorkspace._id);
+              setAlerts(alertResponse.data || []);
+            }
+          }, 2000);
+        } catch (error) {
+          console.error("Error triggering alert checks:", error);
+        }
       }
     } catch (error) {
       console.error("Error updating subscription:", error);
-      alert(
-        "Error updating subscription: " +
-          (error.response?.data?.message || error.message)
+      showToast.error(
+        "Error Updating Subscription",
+        error.response?.data?.message || error.message
       );
     }
   };
   
 
   const deleteSubscription = async (subscriptionId) => {
-    if (!window.confirm("Are you sure you want to delete this subscription?")) return;
-    
-    try {
-      await subscriptionAPI.delete(subscriptionId);
-      setSubscriptions(prev => prev.filter(sub => sub._id !== subscriptionId));
-      setInvoices(prev => prev.filter(inv => inv.subscriptionId._id !== subscriptionId));
-      setAlerts(prev => prev.filter(alert => alert.subscriptionId._id !== subscriptionId));
-    } catch (error) {
-      console.error("Error deleting subscription:", error);
-      alert("Error deleting subscription: " + (error.response?.data?.message || error.message));
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: "Delete Subscription",
+      message: "Are you sure you want to delete this subscription? This action cannot be undone.",
+      confirmText: "Delete",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          await subscriptionAPI.delete(subscriptionId);
+          setSubscriptions(prev => prev.filter(sub => sub._id !== subscriptionId));
+          setInvoices(prev => prev.filter(inv => inv.subscriptionId._id !== subscriptionId));
+          setAlerts(prev => prev.filter(alert => alert.subscriptionId._id !== subscriptionId));
+          showToast.success("Subscription Deleted", "Subscription has been removed successfully!");
+        } catch (error) {
+          console.error("Error deleting subscription:", error);
+          showToast.error("Error Deleting Subscription", error.response?.data?.message || error.message);
+        }
+      }
+    });
   };
   
   const deleteClient = async (clientId) => {
-    if (!window.confirm("Are you sure you want to delete this client?")) return;
-    
-    try {
-      await clientAPI.delete(clientId);
-      setClients(prev => prev.filter(client => client._id !== clientId));
-    } catch (error) {
-      console.error("Error deleting client:", error);
-      alert("Error deleting client: " + (error.response?.data?.message || error.message));
-    }
+    setConfirmDialog({
+      isOpen: true,
+      title: "Delete Client",
+      message: "Are you sure you want to delete this client? This action cannot be undone.",
+      confirmText: "Delete",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          await clientAPI.delete(clientId);
+          setClients(prev => prev.filter(client => client._id !== clientId));
+          showToast.success("Client Deleted", "Client has been removed successfully!");
+        } catch (error) {
+          console.error("Error deleting client:", error);
+          showToast.error("Error Deleting Client", error.response?.data?.message || error.message);
+        }
+      }
+    });
   };
   
 
@@ -351,7 +474,7 @@ const DashboardPage = () => {
     e.preventDefault();
   
     if (!currentWorkspace || !currentWorkspace._id) {
-      alert("Please select or create a workspace before adding a client.");
+      showToast.warning("Workspace Required", "Please select or create a workspace before adding a client.");
       return;
     }
   
@@ -364,14 +487,15 @@ const DashboardPage = () => {
       const response = await clientAPI.create(formData);
       if (response.data.client) {
         setClients((prev) => [...prev, response.data.client]);
+        showToast.success("Client Created", `${response.data.client.name} has been added successfully!`);
         setShowClientForm(false);
         resetClientForm();
       }
     } catch (error) {
       console.error("Error creating client:", error);
-      alert(
-        "Error creating client: " +
-          (error.response?.data?.message || error.message)
+      showToast.error(
+        "Error Creating Client",
+        error.response?.data?.message || error.message
       );
     }
   };
@@ -381,7 +505,7 @@ const DashboardPage = () => {
     e.preventDefault();
   
     if (!editingItem || !editingItem._id) {
-      alert("No client selected for editing.");
+      showToast.warning("No Selection", "No client selected for editing.");
       return;
     }
   
@@ -394,15 +518,16 @@ const DashboardPage = () => {
             client._id === editingItem._id ? response.data.client : client
           )
         );
+        showToast.success("Client Updated", `${response.data.client.name} has been updated successfully!`);
         setShowClientForm(false);
         setEditingItem(null);
         resetClientForm();
       }
     } catch (error) {
       console.error("Error updating client:", error);
-      alert(
-        "Error updating client: " +
-          (error.response?.data?.message || error.message)
+      showToast.error(
+        "Error Updating Client",
+        error.response?.data?.message || error.message
       );
     }
   };
@@ -413,18 +538,97 @@ const DashboardPage = () => {
   const createWorkspace = async (e) => {
     e.preventDefault();
     try {
-      const response = await workspaceAPI.create(workspaceForm);
+      const formData = {
+        name: workspaceForm.name,
+        monthlyCap: workspaceForm.monthlyCap ? Number(workspaceForm.monthlyCap) : undefined
+      };
+      const response = await workspaceAPI.create(formData);
       if (response.data.workspace) {
         setWorkspaces(prev => [...prev, response.data.workspace]);
         setCurrentWorkspace(response.data.workspace);
+        showToast.success("Workspace Created", `${response.data.workspace.name} has been created successfully!`);
         setShowWorkspaceForm(false);
         resetWorkspaceForm();
         fetchWorkspaceData();
       }
     } catch (error) {
       console.error("Error creating workspace:", error);
-      alert("Error creating workspace: " + (error.response?.data?.message || error.message));
+      showToast.error("Error Creating Workspace", error.response?.data?.message || error.message);
     }
+  };
+
+  const editWorkspace = (workspace) => {
+    setEditingItem(workspace);
+    setWorkspaceForm({
+      name: workspace.name,
+      monthlyCap: ""
+    });
+    setShowWorkspaceForm(true);
+  };
+
+  const updateWorkspace = async (e) => {
+    e.preventDefault();
+    if (!editingItem || !editingItem._id) {
+      showToast.warning("No Selection", "No workspace selected for editing.");
+      return;
+    }
+
+    try {
+      const formData = {
+        name: workspaceForm.name
+      };
+      console.log("Updating workspace:", { id: editingItem._id, formData });
+      const response = await workspaceAPI.update(editingItem._id, formData);
+      console.log("Update response:", response);
+      if (response.data.workspace) {
+        setWorkspaces(prev =>
+          prev.map(ws => ws._id === editingItem._id ? response.data.workspace : ws)
+        );
+        if (currentWorkspace?._id === editingItem._id) {
+          setCurrentWorkspace(response.data.workspace);
+        }
+        showToast.success("Workspace Updated", `${response.data.workspace.name} has been updated successfully!`);
+        setShowWorkspaceForm(false);
+        setEditingItem(null);
+        resetWorkspaceForm();
+      }
+    } catch (error) {
+      console.error("Error updating workspace:", error);
+      console.error("Error details:", error.response?.data);
+      showToast.error("Error Updating Workspace", error.response?.data?.message || error.message);
+    }
+  };
+
+  const deleteWorkspace = async (workspaceId) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: "Delete Workspace",
+      message: "Are you sure you want to delete this workspace? This will also delete all subscriptions, clients, invoices, and alerts associated with it. This action cannot be undone.",
+      confirmText: "Delete",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          console.log("Deleting workspace:", workspaceId);
+          await workspaceAPI.delete(workspaceId);
+          setWorkspaces(prev => prev.filter(ws => ws._id !== workspaceId));
+          showToast.success("Workspace Deleted", "Workspace has been removed successfully!");
+          
+          // If deleted workspace was current, switch to another or clear
+          if (currentWorkspace?._id === workspaceId) {
+            const remaining = workspaces.filter(ws => ws._id !== workspaceId);
+            if (remaining.length > 0) {
+              setCurrentWorkspace(remaining[0]);
+            } else {
+              setCurrentWorkspace(null);
+            }
+          }
+        } catch (error) {
+          console.error("Error deleting workspace:", error);
+          console.error("Error details:", error.response?.data);
+          showToast.error("Error Deleting Workspace", error.response?.data?.message || error.message);
+        }
+      }
+    });
   };
 
   const createInvoice = async (e) => {
@@ -439,41 +643,89 @@ const DashboardPage = () => {
       const response = await invoiceAPI.create(formData);
       if (response.data.invoice) {
         setInvoices(prev => [...prev, response.data.invoice]);
+        showToast.success("Invoice Created", "Invoice has been added successfully!");
         setShowInvoiceForm(false);
         resetInvoiceForm();
+        fetchWorkspaceData(); // Refresh to get updated list
       }
     } catch (error) {
       console.error("Error creating invoice:", error);
-      alert("Error creating invoice: " + (error.response?.data?.message || error.message));
+      showToast.error("Error Creating Invoice", error.response?.data?.message || error.message);
     }
   };
 
-  const createAlert = async (e) => {
+  const editInvoice = (invoice) => {
+    setEditingItem(invoice);
+    setInvoiceForm({
+      subscriptionId: invoice.subscriptionId,
+      fileUrl: invoice.fileUrl || "",
+      amount: invoice.amount || "",
+      invoiceDate: invoice.invoiceDate ? new Date(invoice.invoiceDate).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      status: invoice.status || "pending",
+      source: invoice.source || "upload"
+    });
+    setShowInvoiceForm(true);
+  };
+
+  const updateInvoice = async (e) => {
     e.preventDefault();
+    if (!editingItem || !editingItem._id) {
+      showToast.warning("No Selection", "No invoice selected for editing.");
+      return;
+    }
+
     try {
+      const { subscriptionId, ...updateData } = invoiceForm;
       const formData = {
-        ...alertForm,
-        dueDate: new Date(alertForm.dueDate).toISOString(),
-        sentAt: alertForm.sentAt ? new Date(alertForm.sentAt).toISOString() : null
+        ...updateData,
+        amount: Number(invoiceForm.amount),
+        invoiceDate: new Date(invoiceForm.invoiceDate).toISOString()
       };
       
-      const response = await alertAPI.create(formData);
-      if (response.data.alert) {
-        setAlerts(prev => [...prev, response.data.alert]);
-        setShowAlertForm(false);
-        resetAlertForm();
+      const response = await invoiceAPI.update(editingItem._id, formData);
+      if (response.data.invoice) {
+        setInvoices(prev =>
+          prev.map(inv => inv._id === editingItem._id ? response.data.invoice : inv)
+        );
+        showToast.success("Invoice Updated", "Invoice has been updated successfully!");
+        setShowInvoiceForm(false);
+        setEditingItem(null);
+        resetInvoiceForm();
+        fetchWorkspaceData(); // Refresh to get updated list
       }
     } catch (error) {
-      console.error("Error creating alert:", error);
-      alert("Error creating alert: " + (error.response?.data?.message || error.message));
+      console.error("Error updating invoice:", error);
+      showToast.error("Error Updating Invoice", error.response?.data?.message || error.message);
     }
   };
+
+  const deleteInvoice = async (invoiceId) => {
+    setConfirmDialog({
+      isOpen: true,
+      title: "Delete Invoice",
+      message: "Are you sure you want to delete this invoice? This action cannot be undone.",
+      confirmText: "Delete",
+      variant: "danger",
+      onConfirm: async () => {
+        try {
+          await invoiceAPI.delete(invoiceId);
+          setInvoices(prev => prev.filter(inv => inv._id !== invoiceId));
+          showToast.success("Invoice Deleted", "Invoice has been removed successfully!");
+          fetchWorkspaceData(); // Refresh to get updated list
+        } catch (error) {
+          console.error("Error deleting invoice:", error);
+          showToast.error("Error Deleting Invoice", error.response?.data?.message || error.message);
+        }
+      }
+    });
+  };
+
 
   const updateBudget = async (e) => {
     e.preventDefault();
     
     if (!budgets[0] || !budgets[0]._id) {  // FIX: Change .id to ._id
-      alert("No budget found to update.");
+      showToast.warning("No Budget", "No budget found to update.");
       return;
     }
   
@@ -491,13 +743,13 @@ const DashboardPage = () => {
           monthlyCap: "",
           alertThreshold: "",
         });
-        alert("Budget updated successfully!");
+        showToast.success("Budget Updated", "Your budget has been updated successfully!");
       }
     } catch (error) {
       console.error("Error updating budget:", error);
-      alert(
-        "Error updating budget: " +
-          (error.response?.data?.message || error.message)
+      showToast.error(
+        "Error Updating Budget",
+        error.response?.data?.message || error.message
       );
     }
   };
@@ -507,7 +759,7 @@ const DashboardPage = () => {
   const resetSubscriptionForm = () => {
     setSubscriptionForm({
       name: "", vendor: "", plan: "", amount: "", currency: "USD",
-      period: "monthly", nextRenewalDate: "", category: "", notes: "", tags: "", workspaceId: ""
+      period: "monthly", nextRenewalDate: "", category: "", notes: "", tags: "", workspaceId: "", clientId: ""
     });
   };
 
@@ -516,7 +768,7 @@ const DashboardPage = () => {
   };
 
   const resetWorkspaceForm = () => {
-    setWorkspaceForm({ name: "" });
+    setWorkspaceForm({ name: "", monthlyCap: "" });
   };
 
   const resetInvoiceForm = () => {
@@ -526,11 +778,6 @@ const DashboardPage = () => {
     });
   };
 
-  const resetAlertForm = () => {
-    setAlertForm({
-      subscriptionId: "", type: "renewal", dueDate: "", sentAt: ""
-    });
-  };
 
   // Edit functions
   const editSubscription = (subscription) => {
@@ -575,7 +822,11 @@ const DashboardPage = () => {
   const handleLogout = () => {
     localStorage.removeItem("token");
     window.dispatchEvent(new Event("authChanged"));
-    navigate("/login");
+    showToast.success("Logged Out", "You have been successfully logged out");
+    // Delay navigation to allow toast to display
+    setTimeout(() => {
+      navigate("/login");
+    }, 500);
   };
 
   // Calculate dashboard stats
@@ -684,6 +935,7 @@ const categoryData = React.useMemo(() => {
 
   const menuItems = [
     { id: "dashboard", icon: LayoutDashboard, label: "Dashboard", badge: null },
+    { id: "workspaces", icon: Building, label: "Workspaces", badge: workspaces.length },
     { id: "subscriptions", icon: CreditCard, label: "Subscriptions", badge: subscriptions.length },
     { id: "clients", icon: Users, label: "Clients", badge: clients.length },
     { id: "invoices", icon: FileText, label: "Invoices", badge: invoices.length },
@@ -695,14 +947,7 @@ const categoryData = React.useMemo(() => {
     return (
       <div className="flex min-h-screen bg-black items-center justify-center">
         <div className="text-center">
-          {/* Logo */}
-          <div className="flex items-center justify-center mb-8">
-            <div className="w-16 h-16 bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl flex items-center justify-center shadow-lg shadow-purple-600/50">
-              <span className="text-white font-bold text-2xl">S</span>
-            </div>
-            <h1 className="text-3xl font-bold text-white ml-4">SubFlow</h1>
-          </div>
-          
+        
           {/* Spinner */}
           <div className="w-16 h-16 border-4 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
           
@@ -768,7 +1013,7 @@ const categoryData = React.useMemo(() => {
                   {user?.name?.charAt(0) || user?.username?.charAt(0) || "U"}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-white truncate">{user?.username}</p>
+                  <p className="text-sm font-semibold text-white truncate">{user?.name || user?.username}</p>
                   <p className="text-xs text-gray-400 truncate">{user?.email}</p>
                 </div>
               </div>
@@ -789,6 +1034,7 @@ const categoryData = React.useMemo(() => {
               <div>
                 <h2 className="text-xl font-bold text-white">
                   {activeTab === "dashboard" && "Dashboard Overview"}
+                  {activeTab === "workspaces" && "Workspace Management"}
                   {activeTab === "subscriptions" && "Subscriptions Management"}
                   {activeTab === "clients" && "Client Management"}
                   {activeTab === "invoices" && "Invoice Management"}
@@ -797,6 +1043,7 @@ const categoryData = React.useMemo(() => {
                 </h2>
                 <p className="text-xs text-gray-400">
                   {activeTab === "dashboard" && "Complete overview of your subscription ecosystem"}
+                  {activeTab === "workspaces" && "Manage your workspaces and organizations"}
                   {activeTab === "subscriptions" && "Manage all your subscription services"}
                   {activeTab === "clients" && "Handle client relationships and allocations"}
                   {activeTab === "invoices" && "Track and manage all invoices"}
@@ -855,12 +1102,6 @@ const categoryData = React.useMemo(() => {
                 </button>
               )}
 
-              {activeTab === "alerts" && (
-                <button onClick={() => setShowAlertForm(true)} className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-xl font-semibold text-sm transition-all flex items-center space-x-2 shadow-lg shadow-purple-600/30">
-                  <Plus className="w-4 h-4" />
-                  <span>Add Alert</span>
-                </button>
-              )}
             </div>
           </div>
         </header>
@@ -1124,39 +1365,117 @@ const categoryData = React.useMemo(() => {
                     </button>
                   </div>
                   <div className="space-y-3">
-                    {alerts.slice(0, 5).map((alert) => {
+                    {alerts
+                      .sort((a, b) => {
+                        const daysA = Math.ceil((new Date(a.dueDate) - new Date()) / (1000 * 60 * 60 * 24));
+                        const daysB = Math.ceil((new Date(b.dueDate) - new Date()) / (1000 * 60 * 60 * 24));
+                        if (daysA < 0 && daysB >= 0) return -1;
+                        if (daysA >= 0 && daysB < 0) return 1;
+                        if (a.type === 'budget' && b.type !== 'budget') return -1;
+                        if (a.type !== 'budget' && b.type === 'budget') return 1;
+                        return daysA - daysB;
+                      })
+                      .slice(0, 5)
+                      .map((alert) => {
                       const subscription = subscriptions.find(sub => sub._id === alert.subscriptionId);
-                      const daysUntil = Math.ceil((new Date(alert.dueDate) - new Date()) / (1000 * 60 * 60 * 24));
-                      const isUrgent = daysUntil <= 3;
+                      const alertDate = new Date(alert.dueDate);
+                      const now = new Date();
+                      const daysUntil = Math.ceil((alertDate - now) / (1000 * 60 * 60 * 24));
+                      const isUrgent = daysUntil <= 3 && daysUntil >= 0;
+                      const isOverdue = daysUntil < 0;
+                      
+                      // Determine alert info
+                      let alertTitle = '';
+                      let alertMessage = '';
+                      let alertColor = 'purple';
+                      
+                      if (alert.type === 'budget') {
+                        const currentBudget = budgets[0];
+                        const totalMonthlySpend = subscriptions.reduce((sum, sub) => sum + (sub.amount || 0), 0);
+                        const budgetUsage = currentBudget ? (totalMonthlySpend / currentBudget.monthlyCap) * 100 : 0;
+                        
+                        if (totalMonthlySpend > currentBudget?.monthlyCap) {
+                          alertTitle = 'Budget Exceeded';
+                          alertMessage = `Over by ${(totalMonthlySpend - currentBudget.monthlyCap).toFixed(2)}`;
+                          alertColor = 'red';
+                        } else {
+                          alertTitle = 'Budget Alert';
+                          alertMessage = `${budgetUsage.toFixed(0)}% used`;
+                          alertColor = 'orange';
+                        }
+                      } else if (alert.type === 'renewal') {
+                        alertTitle = subscription?.name || 'Renewal';
+                        if (isOverdue) {
+                          alertMessage = 'Overdue';
+                          alertColor = 'red';
+                        } else if (daysUntil === 0) {
+                          alertMessage = 'Due today';
+                          alertColor = 'red';
+                        } else if (daysUntil === 1) {
+                          alertMessage = 'Due tomorrow';
+                          alertColor = 'red';
+                        } else {
+                          alertMessage = `${daysUntil} days left`;
+                          alertColor = daysUntil <= 3 ? 'orange' : 'purple';
+                        }
+                      } else {
+                        alertTitle = subscription?.name || 'Alert';
+                        alertMessage = alert.type;
+                        alertColor = 'purple';
+                      }
                       
                       return (
                         <div key={alert._id} className={`p-4 rounded-xl border transition-all ${
-                          isUrgent 
+                          alertColor === 'red'
                             ? 'bg-red-500/10 border-red-500/30' 
-                            : 'bg-white/5 border-white/10 hover:border-purple-600/30'
+                            : alertColor === 'orange'
+                              ? 'bg-orange-500/10 border-orange-500/30'
+                              : 'bg-white/5 border-white/10 hover:border-purple-600/30'
                         }`}>
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-3">
-                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-                                isUrgent ? 'bg-red-500/20' : 'bg-purple-600/20'
+                            <div className="flex items-center space-x-3 flex-1 min-w-0">
+                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                                alertColor === 'red'
+                                  ? 'bg-red-500/20' 
+                                  : alertColor === 'orange'
+                                    ? 'bg-orange-500/20'
+                                    : 'bg-purple-600/20'
                               }`}>
-                                <Bell className={`w-5 h-5 ${isUrgent ? 'text-red-400' : 'text-purple-400'}`} />
+                                {alert.type === 'budget' ? (
+                                  <DollarSign className={`w-5 h-5 ${
+                                    alertColor === 'red'
+                                      ? 'text-red-400' 
+                                      : alertColor === 'orange'
+                                        ? 'text-orange-400'
+                                        : 'text-purple-400'
+                                  }`} />
+                                ) : (
+                                  <Bell className={`w-5 h-5 ${
+                                    alertColor === 'red'
+                                      ? 'text-red-400' 
+                                      : alertColor === 'orange'
+                                        ? 'text-orange-400'
+                                        : 'text-purple-400'
+                                  }`} />
+                                )}
                               </div>
-                              <div>
-                                <p className="font-semibold text-white text-sm">
-                                  {subscription?.name || 'Unknown Subscription'}
+                              <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-white text-sm truncate">
+                                  {alertTitle}
                                 </p>
-                                <p className="text-xs text-gray-400 capitalize">
-                                  {alert.type} • Due {new Date(alert.dueDate).toLocaleDateString()}
+                                <p className="text-xs text-gray-400 truncate">
+                                  {alertMessage}
                                 </p>
                               </div>
                             </div>
-                            <span className={`px-2 py-1 rounded-full text-xs font-semibold border ${
-                              isUrgent 
+                            <span className={`px-2 py-1 rounded-full text-xs font-semibold border flex-shrink-0 ${
+                              alertColor === 'red'
                                 ? 'bg-red-500/20 text-red-400 border-red-500/30' 
-                                : 'bg-purple-600/20 text-purple-400 border-purple-600/30'
+                                : alertColor === 'orange'
+                                  ? 'bg-orange-500/20 text-orange-400 border-orange-500/30'
+                                  : 'bg-purple-600/20 text-purple-400 border-purple-600/30'
                             }`}>
-                              {isUrgent ? 'Urgent' : 'Info'}
+                              {isOverdue ? 'Overdue' : isUrgent ? 'Urgent' : alert.type === 'budget' ? 'Budget' : 'Info'}
                             </span>
                           </div>
                         </div>
@@ -1214,6 +1533,17 @@ const categoryData = React.useMemo(() => {
                             )}
                           </div>
                           <p className="text-sm text-gray-400 mb-1">{sub.vendor} • {sub.plan}</p>
+                          {subscriptionClients[sub._id] && subscriptionClients[sub._id].length > 0 && (
+                            <div className="flex items-center space-x-2 mt-1 mb-1">
+                              <Users className="w-3 h-3 text-blue-400" />
+                              <span className="text-xs text-blue-400">
+                                Clients: {subscriptionClients[sub._id].map(client => {
+                                  const clientObj = typeof client === 'object' && client.name ? client : clients.find(c => c._id === (client._id || client));
+                                  return clientObj?.name || 'Unknown';
+                                }).join(', ')}
+                              </span>
+                            </div>
+                          )}
                           <p className="text-xs text-gray-500">
                             {renewalStatus.text} • 
                             {sub.tags && sub.tags.length > 0 && (
@@ -1236,6 +1566,16 @@ const categoryData = React.useMemo(() => {
                           {renewalStatus.status}
                         </span>
                         <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button 
+                            onClick={() => {
+                              setSelectedSubscriptionForClients(sub);
+                              setShowManageClientsModal(true);
+                            }}
+                            className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-green-400 transition-colors"
+                            title="Manage Clients"
+                          >
+                            <Users className="w-4 h-4" />
+                          </button>
                           <button 
                             onClick={() => editSubscription(sub)}
                             className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-blue-400 transition-colors"
@@ -1348,6 +1688,17 @@ const categoryData = React.useMemo(() => {
                   <h3 className="text-2xl font-bold text-white">Invoices</h3>
                   <p className="text-sm text-gray-400">Track and manage your subscription invoices</p>
                 </div>
+                <button 
+                  onClick={() => {
+                    setEditingItem(null);
+                    resetInvoiceForm();
+                    setShowInvoiceForm(true);
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-xl font-semibold text-sm transition-all flex items-center space-x-2 shadow-lg shadow-purple-600/30"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Invoice</span>
+                </button>
               </div>
               
               <div className="overflow-x-auto">
@@ -1389,11 +1740,40 @@ const categoryData = React.useMemo(() => {
                           <td className="py-4 px-4 text-sm text-gray-400 capitalize">{invoice.source}</td>
                           <td className="py-4 px-4">
                             <div className="flex items-center space-x-2">
-                              <button className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors">
-                                <Eye className="w-4 h-4" />
+                              {invoice.fileUrl && (
+                                <a 
+                                  href={invoice.fileUrl} 
+                                  target="_blank" 
+                                  rel="noopener noreferrer"
+                                  className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-blue-400 transition-colors"
+                                  title="View Invoice"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </a>
+                              )}
+                              {invoice.fileUrl && (
+                                <a 
+                                  href={invoice.fileUrl} 
+                                  download
+                                  className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-green-400 transition-colors"
+                                  title="Download Invoice"
+                                >
+                                  <Download className="w-4 h-4" />
+                                </a>
+                              )}
+                              <button 
+                                onClick={() => editInvoice(invoice)}
+                                className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-blue-400 transition-colors"
+                                title="Edit Invoice"
+                              >
+                                <Edit className="w-4 h-4" />
                               </button>
-                              <button className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-colors">
-                                <Download className="w-4 h-4" />
+                              <button 
+                                onClick={() => deleteInvoice(invoice._id)}
+                                className="p-2 hover:bg-red-500/10 rounded-lg text-gray-400 hover:text-red-400 transition-colors"
+                                title="Delete Invoice"
+                              >
+                                <Trash2 className="w-4 h-4" />
                               </button>
                             </div>
                           </td>
@@ -1425,64 +1805,150 @@ const categoryData = React.useMemo(() => {
                   <h3 className="text-2xl font-bold text-white">Alerts</h3>
                   <p className="text-sm text-gray-400">Subscription renewal and budget alerts</p>
                 </div>
+                <button
+                  onClick={async () => {
+                    try {
+                      // Trigger alert checks on backend
+                      await alertAPI.triggerChecks();
+                      // Refresh alerts after a short delay
+                      setTimeout(async () => {
+                        if (currentWorkspace) {
+                          const alertResponse = await alertAPI.getByWorkspace(currentWorkspace._id);
+                          setAlerts(alertResponse.data || []);
+                        }
+                      }, 2000);
+                    } catch (error) {
+                      console.error("Error triggering alert checks:", error);
+                    }
+                  }}
+                  className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 hover:border-purple-500/50 rounded-xl font-semibold text-sm transition-all flex items-center space-x-2"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>Refresh Alerts</span>
+                </button>
               </div>
               
               <div className="space-y-4">
-                {alerts.map((alert) => {
+                {alerts
+                  .sort((a, b) => {
+                    // Sort by urgency: overdue first, then by days until
+                    const daysA = Math.ceil((new Date(a.dueDate) - new Date()) / (1000 * 60 * 60 * 24));
+                    const daysB = Math.ceil((new Date(b.dueDate) - new Date()) / (1000 * 60 * 60 * 24));
+                    if (daysA < 0 && daysB >= 0) return -1;
+                    if (daysA >= 0 && daysB < 0) return 1;
+                    if (a.type === 'budget' && b.type !== 'budget') return -1;
+                    if (a.type !== 'budget' && b.type === 'budget') return 1;
+                    return daysA - daysB;
+                  })
+                  .map((alert) => {
                   const subscription = subscriptions.find(sub => sub._id === alert.subscriptionId);
-                  const daysUntil = Math.ceil((new Date(alert.dueDate) - new Date()) / (1000 * 60 * 60 * 24));
-                  const isUrgent = daysUntil <= 3;
+                  const alertDate = new Date(alert.dueDate);
+                  const now = new Date();
+                  const daysUntil = Math.ceil((alertDate - now) / (1000 * 60 * 60 * 24));
+                  const isUrgent = daysUntil <= 3 && daysUntil >= 0;
                   const isOverdue = daysUntil < 0;
+                  
+                  // Determine alert message based on type
+                  let alertTitle = '';
+                  let alertMessage = '';
+                  let alertColor = 'purple';
+                  
+                  if (alert.type === 'budget') {
+                    // For budget alerts, check if we're over or near threshold
+                    const currentBudget = budgets[0];
+                    const totalMonthlySpend = subscriptions.reduce((sum, sub) => sum + (sub.amount || 0), 0);
+                    const budgetUsage = currentBudget ? (totalMonthlySpend / currentBudget.monthlyCap) * 100 : 0;
+                    
+                    if (totalMonthlySpend > currentBudget?.monthlyCap) {
+                      alertTitle = 'Budget Exceeded';
+                      alertMessage = `Your monthly spending (${totalMonthlySpend.toFixed(2)}) exceeds your budget cap (${currentBudget.monthlyCap.toFixed(2)})`;
+                      alertColor = 'red';
+                    } else {
+                      alertTitle = 'Budget Threshold Reached';
+                      alertMessage = `Your budget usage is at ${budgetUsage.toFixed(1)}% of your monthly cap`;
+                      alertColor = 'orange';
+                    }
+                  } else if (alert.type === 'renewal') {
+                    if (isOverdue) {
+                      alertTitle = subscription?.name || 'Subscription Renewal';
+                      alertMessage = `Renewal was due on ${alertDate.toLocaleDateString()}`;
+                      alertColor = 'red';
+                    } else if (daysUntil === 0) {
+                      alertTitle = subscription?.name || 'Subscription Renewal';
+                      alertMessage = 'Renewal is due today!';
+                      alertColor = 'red';
+                    } else if (daysUntil === 1) {
+                      alertTitle = subscription?.name || 'Subscription Renewal';
+                      alertMessage = 'Renewal is due tomorrow!';
+                      alertColor = 'red';
+                    } else {
+                      alertTitle = subscription?.name || 'Subscription Renewal';
+                      alertMessage = `Renewal in ${daysUntil} day${daysUntil > 1 ? 's' : ''}`;
+                      alertColor = daysUntil <= 3 ? 'orange' : 'purple';
+                    }
+                  } else {
+                    alertTitle = subscription?.name || 'Alert';
+                    alertMessage = `${alert.type} alert`;
+                    alertColor = 'purple';
+                  }
                   
                   return (
                     <div key={alert._id} className={`p-6 rounded-xl border transition-all ${
-                      isOverdue
+                      alertColor === 'red'
                         ? 'bg-red-500/20 border-red-500/50'
-                        : isUrgent 
+                        : alertColor === 'orange'
                           ? 'bg-orange-500/20 border-orange-500/50' 
                           : 'bg-white/5 border-white/10 hover:border-purple-600/30'
                     }`}>
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-4 flex-1">
                           <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                            isOverdue
+                            alertColor === 'red'
                               ? 'bg-red-500/20'
-                              : isUrgent 
+                              : alertColor === 'orange'
                                 ? 'bg-orange-500/20' 
                                 : 'bg-purple-600/20'
                           }`}>
-                            <Bell className={`w-6 h-6 ${
-                              isOverdue
-                                ? 'text-red-400'
-                                : isUrgent 
-                                  ? 'text-orange-400' 
-                                  : 'text-purple-400'
-                            }`} />
+                            {alert.type === 'budget' ? (
+                              <DollarSign className={`w-6 h-6 ${
+                                alertColor === 'red'
+                                  ? 'text-red-400'
+                                  : alertColor === 'orange'
+                                    ? 'text-orange-400' 
+                                    : 'text-purple-400'
+                              }`} />
+                            ) : (
+                              <Bell className={`w-6 h-6 ${
+                                alertColor === 'red'
+                                  ? 'text-red-400'
+                                  : alertColor === 'orange'
+                                    ? 'text-orange-400' 
+                                    : 'text-purple-400'
+                              }`} />
+                            )}
                           </div>
-                          <div>
+                          <div className="flex-1">
                             <p className="font-bold text-white">
-                              {subscription?.name || 'Unknown Subscription'}
+                              {alertTitle}
                             </p>
-                            <p className="text-sm text-gray-400 capitalize">
-                              {alert.type} Alert
+                            <p className="text-sm text-gray-400 capitalize mt-1">
+                              {alertMessage}
                             </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              Due: {new Date(alert.dueDate).toLocaleDateString()} 
-                              {isOverdue 
-                                ? ' (Overdue)' 
-                                : ` (in ${daysUntil} days)`
-                              }
-                            </p>
+                            {alert.type === 'renewal' && (
+                              <p className="text-xs text-gray-500 mt-1">
+                                Due: {alertDate.toLocaleDateString()}
+                              </p>
+                            )}
                           </div>
                         </div>
-                        <span className={`px-3 py-2 rounded-full text-sm font-semibold border ${
-                          isOverdue
+                        <span className={`px-3 py-2 rounded-full text-sm font-semibold border whitespace-nowrap ${
+                          alertColor === 'red'
                             ? 'bg-red-500/20 text-red-400 border-red-500/30'
-                            : isUrgent 
+                            : alertColor === 'orange'
                               ? 'bg-orange-500/20 text-orange-400 border-orange-500/30' 
                               : 'bg-purple-600/20 text-purple-400 border-purple-600/30'
                         }`}>
-                          {isOverdue ? 'Overdue' : isUrgent ? 'Urgent' : 'Upcoming'}
+                          {isOverdue ? 'Overdue' : isUrgent ? 'Urgent' : alert.type === 'budget' ? 'Budget' : 'Upcoming'}
                         </span>
                       </div>
                     </div>
@@ -1493,9 +1959,30 @@ const categoryData = React.useMemo(() => {
                   <div className="text-center py-12">
                     <Bell className="w-16 h-16 text-gray-600 mx-auto mb-4" />
                     <h3 className="text-lg font-semibold text-gray-400 mb-2">No alerts yet</h3>
-                    <p className="text-gray-500 mb-4">Alerts will appear here for upcoming renewals and budget thresholds</p>
-                    <button onClick={() => setShowAlertForm(true)} className="btn-gradient">
-                      Create Alert
+                    <p className="text-gray-500 mb-4">Alerts will automatically appear here for:</p>
+                    <ul className="text-gray-400 text-sm space-y-1 mb-4">
+                      <li>• Budget threshold reached or exceeded</li>
+                      <li>• Subscription renewals (7, 5, 4, 3, 2, 1 days before)</li>
+                    </ul>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await alertAPI.triggerChecks();
+                          setTimeout(async () => {
+                            if (currentWorkspace) {
+                              const alertResponse = await alertAPI.getByWorkspace(currentWorkspace._id);
+                              console.log("Refreshed alerts:", alertResponse.data);
+                              setAlerts(alertResponse.data || []);
+                            }
+                          }, 2000);
+                        } catch (error) {
+                          console.error("Error:", error);
+                          showToast.error("Error Refreshing Alerts", "Check console for details.");
+                        }
+                      }}
+                      className="btn-gradient"
+                    >
+                      Check for Alerts Now
                     </button>
                   </div>
                 )}
@@ -1647,6 +2134,115 @@ const categoryData = React.useMemo(() => {
               </div>
             </div>
           )}
+
+          {/* Workspaces Tab */}
+          {activeTab === "workspaces" && (
+            <div className="bg-black/40 rounded-2xl p-6 border border-white/10 backdrop-blur-xl">
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <h3 className="text-2xl font-bold text-white">Workspaces</h3>
+                  <p className="text-sm text-gray-400">Manage your workspaces and organizations</p>
+                </div>
+                <button 
+                  onClick={() => {
+                    setEditingItem(null);
+                    resetWorkspaceForm();
+                    setShowWorkspaceForm(true);
+                  }}
+                  className="px-4 py-2 bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white rounded-xl font-semibold text-sm transition-all flex items-center space-x-2 shadow-lg shadow-purple-600/30"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Create Workspace</span>
+                </button>
+              </div>
+              
+              <div className="space-y-4">
+                {workspaces.map((workspace) => {
+                  const isCurrent = currentWorkspace?._id === workspace._id;
+                  return (
+                    <div 
+                      key={workspace._id} 
+                      className={`p-6 rounded-xl border transition-all ${
+                        isCurrent
+                          ? 'bg-purple-600/20 border-purple-600/50'
+                          : 'bg-white/5 border-white/10 hover:border-purple-600/30 hover:bg-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-4 flex-1">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                            isCurrent
+                              ? 'bg-purple-600/30'
+                              : 'bg-gradient-to-br from-purple-600/20 to-pink-600/20'
+                          }`}>
+                            <Building className={`w-6 h-6 ${isCurrent ? 'text-purple-400' : 'text-purple-400'}`} />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center space-x-2">
+                              <p className="font-bold text-white text-lg">
+                                {workspace.name}
+                              </p>
+                              {isCurrent && (
+                                <span className="px-2 py-1 bg-purple-600/30 text-purple-400 rounded-full text-xs font-semibold border border-purple-600/50">
+                                  Active
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-sm text-gray-400 mt-1">
+                              Created {new Date(workspace.createdAt).toLocaleDateString()}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {!isCurrent && (
+                            <button
+                              onClick={() => setCurrentWorkspace(workspace)}
+                              className="px-3 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 hover:border-purple-500/50 rounded-xl font-semibold text-sm transition-all"
+                              title="Switch to this workspace"
+                            >
+                              Switch
+                            </button>
+                          )}
+                          <button
+                            onClick={() => editWorkspace(workspace)}
+                            className="p-2 hover:bg-white/10 rounded-xl transition-colors text-gray-400 hover:text-white"
+                            title="Edit workspace"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => deleteWorkspace(workspace._id)}
+                            className="p-2 hover:bg-red-500/20 rounded-xl transition-colors text-gray-400 hover:text-red-400"
+                            title="Delete workspace"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+                
+                {workspaces.length === 0 && (
+                  <div className="text-center py-12">
+                    <Building className="w-16 h-16 text-gray-600 mx-auto mb-4" />
+                    <h3 className="text-lg font-semibold text-gray-400 mb-2">No workspaces yet</h3>
+                    <p className="text-gray-500 mb-4">Create your first workspace to get started</p>
+                    <button 
+                      onClick={() => {
+                        setEditingItem(null);
+                        resetWorkspaceForm();
+                        setShowWorkspaceForm(true);
+                      }}
+                      className="btn-gradient"
+                    >
+                      Create Workspace
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </main>
 
@@ -1750,6 +2346,22 @@ const categoryData = React.useMemo(() => {
                     onChange={(e) => setSubscriptionForm({...subscriptionForm, category: e.target.value})} 
                     className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400" 
                   />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Client (Optional)</label>
+                  <select style={{ colorScheme: 'dark' }}
+                    value={subscriptionForm.clientId} 
+                    onChange={(e) => setSubscriptionForm({...subscriptionForm, clientId: e.target.value})} 
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
+                  >
+                    <option value="" className="bg-gray-900 text-white">No Client</option>
+                    {clients.map(client => (
+                      <option key={client._id} value={client._id} className="bg-gray-900 text-white">
+                        {client.name}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-500 mt-1">You can manage clients after creating the subscription</p>
                 </div>
               </div>
               <div>
@@ -1857,8 +2469,10 @@ const categoryData = React.useMemo(() => {
       {showWorkspaceForm && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 rounded-2xl p-6 w-full max-w-md border border-white/10">
-            <h3 className="text-xl font-bold text-white mb-4">Create Workspace</h3>
-            <form onSubmit={createWorkspace} className="space-y-4">
+            <h3 className="text-xl font-bold text-white mb-4">
+              {editingItem ? 'Edit Workspace' : 'Create Workspace'}
+            </h3>
+            <form onSubmit={editingItem ? updateWorkspace : createWorkspace} className="space-y-4">
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Workspace Name *</label>
                 <input 
@@ -1870,11 +2484,32 @@ const categoryData = React.useMemo(() => {
                   required 
                 />
               </div>
+              {!editingItem && (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Monthly Budget (USD)</label>
+                  <input 
+                    type="number" 
+                    placeholder="100 (default)" 
+                    value={workspaceForm.monthlyCap} 
+                    onChange={(e) => setWorkspaceForm({...workspaceForm, monthlyCap: e.target.value})} 
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400" 
+                    min="0"
+                    step="0.01"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Leave empty to use default $100</p>
+                </div>
+              )}
               <div className="flex gap-3">
-                <button type="submit" className="flex-1 btn-gradient py-2">Create Workspace</button>
+                <button type="submit" className="flex-1 btn-gradient py-2">
+                  {editingItem ? 'Update Workspace' : 'Create Workspace'}
+                </button>
                 <button 
                   type="button" 
-                  onClick={() => setShowWorkspaceForm(false)} 
+                  onClick={() => {
+                    setShowWorkspaceForm(false);
+                    setEditingItem(null);
+                    resetWorkspaceForm();
+                  }} 
                   className="flex-1 bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2 rounded-lg font-semibold transition-all duration-200"
                 >
                   Cancel
@@ -1888,164 +2523,246 @@ const categoryData = React.useMemo(() => {
       {/* Invoice Form Modal */}
       {showInvoiceForm && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 rounded-2xl p-6 w-full max-w-md border border-white/10">
-            <h3 className="text-xl font-bold text-white mb-4">Add Invoice</h3>
-            <form onSubmit={createInvoice} className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Subscription *</label>
-                <select style={{ colorScheme: 'dark' }}
-                  value={invoiceForm.subscriptionId} 
-                  onChange={(e) => setInvoiceForm({...invoiceForm, subscriptionId: e.target.value})} 
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
-                  required
-                >
-                  <option value="" className="bg-gray-900 text-white">Select Subscription</option>
-                  {subscriptions.map(sub => (
-                    <option key={sub._id} value={sub._id}>{sub.name}</option>
-                  ))}
-                </select>
+          <div className="bg-gray-900 rounded-2xl w-full max-w-md border border-white/10 flex flex-col max-h-[90vh]">
+            <div className="p-6 pb-4 border-b border-white/10">
+              <h3 className="text-xl font-bold text-white">
+                {editingItem ? 'Edit Invoice' : 'Add Invoice'}
+              </h3>
+            </div>
+            <form onSubmit={editingItem ? updateInvoice : createInvoice} className="flex flex-col flex-1 min-h-0">
+              <div className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Subscription *</label>
+                  <select style={{ colorScheme: 'dark' }}
+                    value={invoiceForm.subscriptionId} 
+                    onChange={(e) => setInvoiceForm({...invoiceForm, subscriptionId: e.target.value})} 
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
+                    required
+                    disabled={!!editingItem}
+                  >
+                    <option value="" className="bg-gray-900 text-white">Select Subscription</option>
+                    {subscriptions.map(sub => (
+                      <option key={sub._id} value={sub._id}>{sub.name}</option>
+                    ))}
+                  </select>
+                  {editingItem && (
+                    <p className="text-xs text-gray-500 mt-1">Subscription cannot be changed when editing</p>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">File URL</label>
+                  <input 
+                    type="text" 
+                    placeholder="File URL" 
+                    value={invoiceForm.fileUrl} 
+                    onChange={(e) => setInvoiceForm({...invoiceForm, fileUrl: e.target.value})} 
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400" 
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Amount ($) *</label>
+                  <input 
+                    type="number" 
+                    step="0.01"
+                    placeholder="Amount" 
+                    value={invoiceForm.amount} 
+                    onChange={(e) => setInvoiceForm({...invoiceForm, amount: e.target.value})} 
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400" 
+                    required 
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Invoice Date *</label>
+                  <input 
+                    type="date" 
+                    placeholder="Invoice Date" 
+                    value={invoiceForm.invoiceDate} 
+                    onChange={(e) => setInvoiceForm({...invoiceForm, invoiceDate: e.target.value})} 
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
+                    required 
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Status</label>
+                  <select 
+                    value={invoiceForm.status} 
+                    onChange={(e) => setInvoiceForm({...invoiceForm, status: e.target.value})} 
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
+                  >
+                    <option value="pending">Pending</option>
+                    <option value="paid">Paid</option>
+                    <option value="overdue">Overdue</option>
+                    <option value="void">Void</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">Source</label>
+                  <select style={{ colorScheme: 'dark' }}
+                    value={invoiceForm.source} 
+                    onChange={(e) => setInvoiceForm({...invoiceForm, source: e.target.value})} 
+                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
+                  >
+                    <option value="email" className="bg-gray-900 text-white">Email</option>
+                    <option value="upload" className="bg-gray-900 text-white">Upload</option>
+                    <option value="api" className="bg-gray-900 text-white">API</option>
+                  </select>
+                </div>
               </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">File URL</label>
-                <input 
-                  type="text" 
-                  placeholder="File URL" 
-                  value={invoiceForm.fileUrl} 
-                  onChange={(e) => setInvoiceForm({...invoiceForm, fileUrl: e.target.value})} 
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400" 
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Amount ($) *</label>
-                <input 
-                  type="number" 
-                  step="0.01"
-                  placeholder="Amount" 
-                  value={invoiceForm.amount} 
-                  onChange={(e) => setInvoiceForm({...invoiceForm, amount: e.target.value})} 
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400" 
-                  required 
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Invoice Date *</label>
-                <input 
-                  type="date" 
-                  placeholder="Invoice Date" 
-                  value={invoiceForm.invoiceDate} 
-                  onChange={(e) => setInvoiceForm({...invoiceForm, invoiceDate: e.target.value})} 
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
-                  required 
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Status</label>
-                <select 
-                  value={invoiceForm.status} 
-                  onChange={(e) => setInvoiceForm({...invoiceForm, status: e.target.value})} 
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
-                >
-                  <option value="pending">Pending</option>
-                  <option value="paid">Paid</option>
-                  <option value="overdue">Overdue</option>
-                  <option value="void">Void</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Source</label>
-                <select style={{ colorScheme: 'dark' }}
-                  value={invoiceForm.source} 
-                  onChange={(e) => setInvoiceForm({...invoiceForm, source: e.target.value})} 
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
-                >
-                  <option value="email" className="bg-gray-900 text-white">Email</option>
-                  <option value="upload" className="bg-gray-900 text-white">Upload</option>
-                  <option value="api" className="bg-gray-900 text-white">API</option>
-                </select>
-              </div>
-              <div className="flex gap-3">
-                <button type="submit" className="flex-1 btn-gradient py-2">Create Invoice</button>
-                <button 
-                  type="button" 
-                  onClick={() => setShowInvoiceForm(false)} 
-                  className="flex-1 bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2 rounded-lg font-semibold transition-all duration-200"
-                >
-                  Cancel
-                </button>
+              <div className="p-6 pt-4 border-t border-white/10">
+                <div className="flex gap-3">
+                  <button type="submit" className="flex-1 btn-gradient py-2">
+                    {editingItem ? 'Update Invoice' : 'Create Invoice'}
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => {
+                      setShowInvoiceForm(false);
+                      setEditingItem(null);
+                      resetInvoiceForm();
+                    }} 
+                    className="flex-1 bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2 rounded-lg font-semibold transition-all duration-200"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Alert Form Modal */}
-      {showAlertForm && (
+      {/* Manage Clients Modal */}
+      {showManageClientsModal && selectedSubscriptionForClients && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-gray-900 rounded-2xl p-6 w-full max-w-md border border-white/10">
-            <h3 className="text-xl font-bold text-white mb-4">Create Alert</h3>
-            <form onSubmit={createAlert} className="space-y-4">
+          <div className="bg-gray-900 rounded-2xl w-full max-w-md border border-white/10 flex flex-col max-h-[90vh]">
+            <div className="p-6 pb-4 border-b border-white/10">
+              <h3 className="text-xl font-bold text-white">
+                Manage Clients for {selectedSubscriptionForClients.name}
+              </h3>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {/* Current Linked Clients */}
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Subscription *</label>
-                <select style={{ colorScheme: 'dark' }}
-                  value={alertForm.subscriptionId} 
-                  onChange={(e) => setAlertForm({...alertForm, subscriptionId: e.target.value})} 
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
-                  required
+                <label className="block text-sm text-gray-400 mb-3">Linked Clients</label>
+                {subscriptionClients[selectedSubscriptionForClients._id] && subscriptionClients[selectedSubscriptionForClients._id].length > 0 ? (
+                  <div className="space-y-2">
+                    {subscriptionClients[selectedSubscriptionForClients._id].map((clientObj, index) => {
+                      const client = typeof clientObj === 'object' ? clientObj : clients.find(c => c._id === clientObj);
+                      if (!client) return null;
+                      return (
+                        <div key={client._id || index} className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10">
+                          <div>
+                            <p className="text-white font-semibold">{client.name}</p>
+                            {client.contact && (
+                              <p className="text-xs text-gray-400">{client.contact}</p>
+                            )}
+                          </div>
+                          <button
+                            onClick={async () => {
+                              try {
+                                await subscriptionClientAPI.unlinkClient({
+                                  subscriptionId: selectedSubscriptionForClients._id,
+                                  clientId: client._id
+                                });
+                                await fetchClientsForSubscription(selectedSubscriptionForClients._id);
+                                showToast.success("Client Unlinked", `${client.name} has been removed from this subscription`);
+                              } catch (error) {
+                                console.error("Error unlinking client:", error);
+                                showToast.error("Error Unlinking Client", error.response?.data?.message || error.message);
+                              }
+                            }}
+                            className="p-2 hover:bg-red-500/20 rounded-lg text-gray-400 hover:text-red-400 transition-colors"
+                            title="Remove Client"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">No clients linked to this subscription</p>
+                )}
+              </div>
+
+              {/* Add Client */}
+              <div>
+                <label className="block text-sm text-gray-400 mb-3">Add Client</label>
+                <select
+                  style={{ colorScheme: 'dark' }}
+                  onChange={async (e) => {
+                    const clientId = e.target.value;
+                    if (!clientId) return;
+                    
+                    try {
+                      await subscriptionClientAPI.linkClient({
+                        subscriptionId: selectedSubscriptionForClients._id,
+                        clientId: clientId
+                      });
+                      const linkedClient = clients.find(c => c._id === clientId);
+                      await fetchClientsForSubscription(selectedSubscriptionForClients._id);
+                      showToast.success("Client Linked", `${linkedClient?.name || 'Client'} has been linked to this subscription`);
+                      e.target.value = ""; // Reset select
+                    } catch (error) {
+                      console.error("Error linking client:", error);
+                      showToast.error("Error Linking Client", error.response?.data?.message || error.message);
+                    }
+                  }}
+                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
+                  defaultValue=""
                 >
-                  <option value="" className="bg-gray-900 text-white">Select Subscription</option>
-                  {subscriptions.map(sub => (
-                    <option key={sub._id} value={sub._id}>{sub.name}</option>
-                  ))}
+                  <option value="" className="bg-gray-900 text-white">Select a client to add</option>
+                  {clients
+                    .filter(client => {
+                      const linkedClients = subscriptionClients[selectedSubscriptionForClients._id] || [];
+                      return !linkedClients.some(c => {
+                        const cId = typeof c === 'object' ? c._id : c;
+                        return cId === client._id;
+                      });
+                    })
+                    .map(client => (
+                      <option key={client._id} value={client._id} className="bg-gray-900 text-white">
+                        {client.name}
+                      </option>
+                    ))}
                 </select>
+                {clients.filter(client => {
+                  const linkedClients = subscriptionClients[selectedSubscriptionForClients._id] || [];
+                  return !linkedClients.some(c => {
+                    const cId = typeof c === 'object' ? c._id : c;
+                    return cId === client._id;
+                  });
+                }).length === 0 && (
+                  <p className="text-xs text-gray-500 mt-2">All clients are already linked to this subscription</p>
+                )}
               </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Alert Type *</label>
-                <select style={{ colorScheme: 'dark' }}
-                  value={alertForm.type} 
-                  onChange={(e) => setAlertForm({...alertForm, type: e.target.value})} 
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
-                  required
-                >
-                  <option value="renewal" className="bg-gray-900 text-white">Renewal</option>
-                  <option value="budget" className="bg-gray-900 text-white">Budget</option>
-                  <option value="invoice-missing" className="bg-gray-900 text-white">Invoice Missing</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Due Date *</label>
-                <input 
-                  type="date" 
-                  placeholder="Due Date" 
-                  value={alertForm.dueDate} 
-                  onChange={(e) => setAlertForm({...alertForm, dueDate: e.target.value})} 
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
-                  required 
-                />
-              </div>
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">Sent At (Optional)</label>
-                <input 
-                  type="datetime-local" 
-                  placeholder="Sent At" 
-                  value={alertForm.sentAt} 
-                  onChange={(e) => setAlertForm({...alertForm, sentAt: e.target.value})} 
-                  className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
-                />
-              </div>
-              <div className="flex gap-3">
-                <button type="submit" className="flex-1 btn-gradient py-2">Create Alert</button>
-                <button 
-                  type="button" 
-                  onClick={() => setShowAlertForm(false)} 
-                  className="flex-1 bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2 rounded-lg font-semibold transition-all duration-200"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
+            </div>
+            <div className="p-6 pt-4 border-t border-white/10">
+              <button
+                onClick={() => {
+                  setShowManageClientsModal(false);
+                  setSelectedSubscriptionForClients(null);
+                }}
+                className="w-full bg-white/5 hover:bg-white/10 text-white border border-white/10 px-4 py-2 rounded-lg font-semibold transition-all duration-200"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/* Confirmation Dialog */}
+      <ConfirmDialog
+        isOpen={confirmDialog.isOpen}
+        onClose={() => setConfirmDialog({ ...confirmDialog, isOpen: false })}
+        onConfirm={confirmDialog.onConfirm}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmText={confirmDialog.confirmText}
+        variant={confirmDialog.variant}
+      />
+
     </div>
   );
 };

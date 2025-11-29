@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
+import { showToast } from "../utils/toast";
 
 export default function Navigation() {
   const [isOpen, setIsOpen] = useState(false);
@@ -34,8 +35,12 @@ export default function Navigation() {
     localStorage.removeItem("token");
     setIsLoggedIn(false);
     window.dispatchEvent(new Event("authChanged"));
-    navigate("/");
+    showToast.success("Logged Out", "You have been successfully logged out");
     setIsOpen(false);
+    // Delay navigation to allow toast to display
+    setTimeout(() => {
+      navigate("/");
+    }, 500);
   };
 
   const isActive = (path) => location.pathname === path;

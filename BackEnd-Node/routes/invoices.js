@@ -13,7 +13,7 @@ router.post(
     body("amount").isFloat({ min: 0 }),
     body("invoiceDate").isISO8601().toDate(),
     body("source").isIn(["email", "upload", "api"]),
-    body("status").isIn(["paid", "unpaid", "pending"]),
+      body("status").isIn(["pending", "paid", "overdue", "void"]),
   ],
   ic.createInvoice
 );

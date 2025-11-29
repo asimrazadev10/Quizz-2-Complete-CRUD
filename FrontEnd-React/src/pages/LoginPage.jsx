@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { authAPI } from "../utils/api";
+import { showToast } from "../utils/toast";
+import { toast } from "sonner";
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -13,21 +15,18 @@ export default function LoginPage() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState("");
 
   const validateForm = () => {
-    setError("");
-
     // Email validation
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailPattern.test(formData.email.trim())) {
-      setError("Please enter a valid email address");
+      showToast.error("Invalid Email", "Please enter a valid email address");
       return false;
     }
 
     // Password validation
     if (!formData.password) {
-      setError("Password is required");
+      showToast.error("Password Required", "Please enter your password");
       return false;
     }
 
@@ -42,7 +41,7 @@ export default function LoginPage() {
     }
 
     setIsSubmitting(true);
-    setError("");
+    const loadingToast = showToast.loading("Signing in...");
 
     try {
       const response = await authAPI.login(
@@ -61,16 +60,23 @@ export default function LoginPage() {
           // ignore
         }
 
+        toast.dismiss(loadingToast);
+        showToast.success("Welcome back!", "Successfully signed in to your account");
+        
         // Redirect to dashboard
-        navigate("/dashboard");
+        setTimeout(() => {
+          navigate("/dashboard");
+        }, 500);
       } else {
-        setError("Login failed. Please check your credentials.");
+        toast.dismiss(loadingToast);
+        showToast.error("Login Failed", "Please check your credentials and try again");
       }
     } catch (err) {
+      toast.dismiss(loadingToast);
       if (err.response?.data?.message) {
-        setError(err.response.data.message);
+        showToast.error("Login Failed", err.response.data.message);
       } else {
-        setError("Invalid credentials. Please try again.");
+        showToast.error("Login Failed", "Invalid credentials. Please try again.");
       }
     } finally {
       setIsSubmitting(false);
@@ -204,13 +210,6 @@ export default function LoginPage() {
 
             {/* Login Form */}
             <form onSubmit={handleSubmit} className="card-glass p-8 space-y-6">
-              {/* Error Message */}
-              {error && (
-                <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-lg text-red-400 text-sm">
-                  {error}
-                </div>
-              )}
-
               {/* Email */}
               <div>
                 <label

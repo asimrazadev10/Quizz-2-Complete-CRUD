@@ -87,9 +87,11 @@ export const invoiceAPI = {
 export const alertAPI = {
   create: (data) => api.post("/alerts/", data),
   getBySubscription: (subscriptionId) => api.get(`/alerts/subscription/${subscriptionId}`),
+  getByWorkspace: (workspaceId) => api.get(`/alerts/workspace/${workspaceId}`),
   get: (id) => api.get(`/alerts/${id}`),
   update: (id, data) => api.put(`/alerts/${id}`, data),
   delete: (id) => api.delete(`/alerts/${id}`),
+  triggerChecks: () => api.post("/alerts/trigger-checks"),
 };
 
 // Budget API
@@ -99,6 +101,14 @@ export const budgetAPI = {
   update: (id, data) => api.put(`/budgets/${id}`, data),  // This is correct now
 };
 
+
+// Subscription Client API
+export const subscriptionClientAPI = {
+  linkClient: (data) => api.post("/subscriptionClients/link-client", data),
+  unlinkClient: (data) => api.post("/subscriptionClients/unlink-client", data),
+  getClientsForSubscription: (subscriptionId) => api.get(`/subscriptionClients/clients/${subscriptionId}`),
+  getSubscriptionsForClient: (clientId) => api.get(`/subscriptionClients/subscriptions/${clientId}`),
+};
 
 // User API
 export const userAPI = {

@@ -1,6 +1,8 @@
 import { useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { authAPI } from "../utils/api"
+import { showToast } from "../utils/toast"
+import { toast } from "sonner"
 
 export default function RegisterPage() {
   const navigate = useNavigate()
@@ -19,51 +21,47 @@ export default function RegisterPage() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
-  const [error, setError] = useState("")
-  const [success, setSuccess] = useState("")
 
   // Client-side validation
   const validateForm = () => {
-    setError("")
-    
     // Name validation - alphabetic only, 6-35 characters
     const namePattern = /^[A-Za-z]+(?:\s[A-Za-z]+)?$/
     if (!namePattern.test(formData.name.trim())) {
-      setError("Name must contain only alphabetic characters")
+      showToast.error("Invalid Name", "Name must contain only alphabetic characters")
       return false
     }
     if (formData.name.trim().length < 6 || formData.name.trim().length > 35) {
-      setError("Name must be between 6 and 35 characters")
+      showToast.error("Invalid Name", "Name must be between 6 and 35 characters")
       return false
     }
 
     // Username validation - 6-35 characters
     if (formData.username.trim().length < 6 || formData.username.trim().length > 35) {
-      setError("Username must be between 6 and 35 characters")
+      showToast.error("Invalid Username", "Username must be between 6 and 35 characters")
       return false
     }
 
     // Email validation
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
     if (!emailPattern.test(formData.email.trim())) {
-      setError("Please enter a valid email address")
+      showToast.error("Invalid Email", "Please enter a valid email address")
       return false
     }
 
     // Password validation
     if (formData.password.length < 1) {
-      setError("Password is required")
+      showToast.error("Password Required", "Please enter a password")
       return false
     }
 
     // Confirm password match
     if (formData.password !== formData.confirmPassword) {
-      setError("Passwords don't match!")
+      showToast.error("Password Mismatch", "Passwords don't match!")
       return false
     }
 
     if (!formData.agreeToTerms) {
-      setError("Please agree to the Terms of Service and Privacy Policy")
+      showToast.error("Terms Required", "Please agree to the Terms of Service and Privacy Policy")
       return false
     }
 
@@ -78,8 +76,7 @@ export default function RegisterPage() {
     }
 
     setIsSubmitting(true)
-    setError("")
-    setSuccess("")
+    const loadingToast = showToast.loading("Creating your account...")
     
     try {
       const registrationData = {
@@ -93,7 +90,8 @@ export default function RegisterPage() {
       const response = await authAPI.register(registrationData)
       
       if (response.status === 201 || response.token) {
-        setSuccess(response.message || "Registration successful!")
+        toast.dismiss(loadingToast)
+        showToast.success("Account Created!", response.message || "Registration successful! Redirecting to dashboard...")
         
         // Store token if provided
         if (response.token) {
@@ -111,19 +109,21 @@ export default function RegisterPage() {
           navigate('/dashboard')
         }, 2000)
       } else {
-        setError(response.message || "Registration failed. Please try again.")
+        toast.dismiss(loadingToast)
+        showToast.error("Registration Failed", response.message || "Please try again")
       }
     } catch (err) {
+      toast.dismiss(loadingToast)
       // Handle validation errors from backend
       if (err.response?.data?.message) {
-        setError(err.response.data.message)
+        showToast.error("Registration Failed", err.response.data.message)
       } else if (err.response?.data?.errors) {
         const validationErrors = err.response.data.errors
           .map(e => e.msg)
           .join(", ")
-        setError(validationErrors)
+        showToast.error("Validation Error", validationErrors)
       } else {
-        setError("An error occurred during registration. Please try again.")
+        showToast.error("Registration Failed", "An error occurred. Please try again.")
       }
     } finally {
       setIsSubmitting(false)
@@ -172,20 +172,6 @@ export default function RegisterPage() {
 
             {/* Registration Form */}
             <form onSubmit={handleSubmit} className="card-glass p-8 space-y-6">
-              {/* Error Message */}
-              {error && (
-                <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-lg text-red-400 text-sm">
-                  {error}
-                </div>
-              )}
-
-              {/* Success Message */}
-              {success && (
-                <div className="p-4 bg-green-900/20 border border-green-500/50 rounded-lg text-green-400 text-sm">
-                  {success}
-                </div>
-              )}
-
               {/* Name Field */}
               <div>
                 <label htmlFor="name" className="block text-white font-medium mb-2 text-sm">

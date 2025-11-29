@@ -2,8 +2,10 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import morgan from "morgan";
+import cron from "node-cron";
 
 import connectToMongo from "./db.js";
+import alertService from "./services/alertService.js";
 
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
@@ -47,5 +49,20 @@ app.use("/api/userPlans", userPlanRoutes);
 const PORT = process.env.PORT;
 
 connectToMongo().then(() => {
-  app.listen(PORT, () => console.log(`API active on http://localhost:${PORT}`));
+  app.listen(PORT, () => {
+    console.log(`API active on http://localhost:${PORT}`);
+    
+    // Run alert checks immediately on startup
+    alertService.runAlertChecks();
+    
+    // Schedule alert checks to run every hour
+    // Cron format: minute hour day month day-of-week
+    // '0 * * * *' means at minute 0 of every hour
+    cron.schedule('0 * * * *', () => {
+      console.log('Running scheduled alert checks...');
+      alertService.runAlertChecks();
+    });
+    
+    console.log('Automatic alert checking scheduled to run every hour');
+  });
 });

@@ -2,6 +2,7 @@ import Alert from "../models/Alert.js";
 import Subscription from "../models/Subscription.js";
 import Workspace from "../models/Workspace.js";
 import sanitizeInput from "../utils/sanitizeInput.js";
+import alertService from "../services/alertService.js";
 
 const createAlert = async (req, res) => {
   const data = req.body;
@@ -66,6 +67,39 @@ const getAlertsBySubscription = async (req, res) => {
     return res.json(alerts);
   } catch (e) {
     console.error("Error fetching alerts:", e);
+    return res.status(500).json({ message: "Failed to fetch alerts" });
+  }
+};
+
+const getAlertsByWorkspace = async (req, res) => {
+  const workspaceId = req.params.workspaceId;
+
+  try {
+    // Verify workspace ownership
+    const ws = await Workspace.findOne({
+      _id: workspaceId,
+      ownerId: req.userId,
+    });
+    if (!ws) {
+      return res
+        .status(403)
+        .json({ message: "Not allowed to view alerts for this workspace" });
+    }
+
+    // Get all subscriptions for this workspace
+    const subscriptions = await Subscription.find({ workspaceId });
+    const subscriptionIds = subscriptions.map(sub => sub._id);
+
+    // Get all alerts for subscriptions in this workspace
+    const alerts = await Alert.find({
+      subscriptionId: { $in: subscriptionIds }
+    }).sort({
+      dueDate: 1,
+    });
+
+    return res.json(alerts);
+  } catch (e) {
+    console.error("Error fetching alerts by workspace:", e);
     return res.status(500).json({ message: "Failed to fetch alerts" });
   }
 };
@@ -170,10 +204,27 @@ const deleteAlert = async (req, res) => {
   }
 };
 
+const triggerAlertChecks = async (req, res) => {
+  try {
+    // Manually trigger alert checks (useful for testing or manual triggers)
+    await alertService.runAlertChecks();
+    
+    return res.json({
+      status: 200,
+      message: "Alert checks triggered successfully",
+    });
+  } catch (e) {
+    console.error("Error triggering alert checks:", e);
+    return res.status(500).json({ message: "Failed to trigger alert checks" });
+  }
+};
+
 export default {
   createAlert,
   getAlertsBySubscription,
+  getAlertsByWorkspace,
   getAlert,
   updateAlert,
   deleteAlert,
+  triggerAlertChecks,
 };

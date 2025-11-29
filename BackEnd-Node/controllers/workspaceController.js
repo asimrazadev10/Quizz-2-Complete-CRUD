@@ -1,5 +1,7 @@
 import Workspace from "../models/Workspace.js";
 import Budget from "../models/Budget.js";
+import Subscription from "../models/Subscription.js";
+import Client from "../models/Client.js";
 import sanitizeInput from "../utils/sanitizeInput.js";
 import mongoose from "mongoose";
 import { validationResult } from "express-validator";
@@ -31,11 +33,16 @@ const createWorkspace = async (req, res) => {
     const ws = wsArray[0];
 
     // Every workspace needs a budget to function
+    // Use provided monthlyCap or default to 100 (not 1000)
+    const monthlyCap = (data.monthlyCap && data.monthlyCap !== "" && !isNaN(data.monthlyCap)) 
+      ? Number(data.monthlyCap) 
+      : 100;
+    
     await Budget.create(
       [
         {
           workspaceId: ws._id,
-          monthlyCap: 1000, // Default cap
+          monthlyCap: monthlyCap,
           alertThreshold: 80,
         }
       ],
@@ -73,7 +80,7 @@ const getMyWorkspaces = async (req, res) => {
 };
 
 const getWorkspace = async (req, res) => {
-  const id = req.params.id;
+  const id = req.params.workspaceId || req.params.id;
 
   const ws = await Workspace.findById(id);
   if (!ws) return res.status(404).json({ message: "Workspace not found" });
@@ -83,18 +90,28 @@ const getWorkspace = async (req, res) => {
 };
 
 const updateWorkspace = async (req, res) => {
-  const id = req.params.id;
+  const id = req.params.workspaceId || req.params.id;
   const data = req.body;
 
   try {
+    console.log("Updating workspace:", { id, userId: req.userId, name: data.name });
+    
+    // First verify the workspace exists and user owns it
+    const existingWs = await Workspace.findOne({ _id: id, ownerId: req.userId });
+    if (!existingWs) {
+      console.log("Workspace not found or user doesn't own it:", { id, userId: req.userId });
+      return res.status(403).json({ message: "Not allowed or not found" });
+    }
+
     const ws = await Workspace.findOneAndUpdate(
       { _id: id, ownerId: req.userId },
       { name: sanitizeInput(data.name) },
       { new: true }
     );
 
-    if (!ws)
+    if (!ws) {
       return res.status(403).json({ message: "Not allowed or not found" });
+    }
 
     return res.json({
       status: 200,
@@ -103,29 +120,52 @@ const updateWorkspace = async (req, res) => {
     });
   } catch (e) {
     console.error("Error updating workspace:", e);
-    return res.status(500).json({ message: "Failed to update workspace" });
+    return res.status(500).json({ message: "Failed to update workspace", error: e.message });
   }
 };
 
 const deleteWorkspace = async (req, res) => {
-  const id = req.params.id;
+  const id = req.params.workspaceId || req.params.id;
 
   try {
+    console.log("Deleting workspace:", { id, userId: req.userId });
+    
+    // First verify the workspace exists and user owns it
+    const existingWs = await Workspace.findOne({ _id: id, ownerId: req.userId });
+    if (!existingWs) {
+      console.log("Workspace not found or user doesn't own it:", { id, userId: req.userId });
+      return res.status(403).json({ message: "Not allowed or not found" });
+    }
+
+    // Delete all related data first (subscriptions will cascade delete their related data via pre-hooks)
+    // Delete subscriptions (this will also delete invoices, alerts, subscriptionClients via pre-hooks)
+    await Subscription.deleteMany({ workspaceId: id });
+    
+    // Delete clients
+    await Client.deleteMany({ workspaceId: id });
+    
+    // Delete budget
+    await Budget.deleteMany({ workspaceId: id });
+    
+    // Finally delete the workspace
     const ws = await Workspace.findOneAndDelete({
       _id: id,
       ownerId: req.userId,
     });
 
-    if (!ws)
+    if (!ws) {
       return res.status(403).json({ message: "Not allowed or not found" });
+    }
 
+    console.log("Workspace deleted successfully:", id);
     return res.json({
       status: 200,
       message: "Workspace deleted successfully",
     });
   } catch (e) {
     console.error("Error deleting workspace:", e);
-    return res.status(500).json({ message: "Failed to delete workspace" });
+    console.error("Error stack:", e.stack);
+    return res.status(500).json({ message: "Failed to delete workspace", error: e.message });
   }
 };
 

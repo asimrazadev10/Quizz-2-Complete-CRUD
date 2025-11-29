@@ -22,6 +22,10 @@ router.post(
 
 // FIX: Remove /alerts prefix
 router.get("/subscription/:subscriptionId", authenticate, ac.getAlertsBySubscription);
+router.get("/workspace/:workspaceId", authenticate, ac.getAlertsByWorkspace);
+
+// Manual trigger for alert checks (useful for testing)
+router.post("/trigger-checks", authenticate, ac.triggerAlertChecks);
 
 // FIX: Remove /alert prefix
 router.get("/:id", authenticate, ac.getAlert);
