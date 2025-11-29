@@ -3,9 +3,11 @@ import Navigation from "./components/navigation"
 import Footer from "./components/footer"
 import ScrollToTop from "./components/ScrollToTop"
 import ProtectedRoute from "./components/ProtectedRoute"
+import AdminProtectedRoute from "./components/AdminProtectedRoute"
 import HomePage from "./pages/HomePage"
 import AboutPage from "./pages/AboutPage"
 import DashboardPage from "./pages/DashboardPage"
+import AdminDashboardPage from "./pages/AdminDashboardPage"
 import ServicesPage from "./pages/ServicesPage"
 import ContactPage from "./pages/ContactPage"
 import RegisterPage from "./pages/RegisterPage"
@@ -31,6 +33,11 @@ function App() {
             <ProtectedRoute>
               <DashboardPage />
             </ProtectedRoute>
+          } />
+          <Route path="/admin" element={
+            <AdminProtectedRoute>
+              <AdminDashboardPage />
+            </AdminProtectedRoute>
           } />
           <Route path="/about" element={<AboutPage />} />
           <Route path="/services" element={<ServicesPage />} />

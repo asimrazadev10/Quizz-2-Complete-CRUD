@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { authAPI } from "../utils/api";
+import { authAPI, userAPI } from "../utils/api";
 import { showToast } from "../utils/toast";
 import { toast } from "sonner";
 
@@ -63,10 +63,26 @@ export default function LoginPage() {
         toast.dismiss(loadingToast);
         showToast.success("Welcome back!", "Successfully signed in to your account");
         
-        // Redirect to dashboard
-        setTimeout(() => {
-          navigate("/dashboard");
-        }, 500);
+        // Check user role and redirect accordingly
+        try {
+          const userResponse = await userAPI.getMe();
+          const userRole = userResponse.data?.role || "user";
+          
+          // Redirect based on role
+          setTimeout(() => {
+            if (userRole === "admin") {
+              navigate("/admin");
+            } else {
+              navigate("/dashboard");
+            }
+          }, 500);
+        } catch (error) {
+          console.error("Error fetching user data:", error);
+          // Default to dashboard if we can't fetch user data
+          setTimeout(() => {
+            navigate("/dashboard");
+          }, 500);
+        }
       } else {
         toast.dismiss(loadingToast);
         showToast.error("Login Failed", "Please check your credentials and try again");

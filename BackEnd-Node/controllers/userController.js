@@ -108,9 +108,148 @@ const searchUsers = async (req, res) => {
   res.json(users);
 };
 
+// Admin functions
+const getAllUsers = async (req, res) => {
+  try {
+    const users = await User.find().select("-passwordHash").sort({ createdAt: -1 });
+    return res.json({ data: users });
+  } catch (e) {
+    console.error("Error fetching users:", e);
+    return res.status(500).json({ message: "Failed to fetch users" });
+  }
+};
+
+const createUser = async (req, res) => {
+  const resData = {};
+  const data = { ...req.body };
+
+  try {
+    // Validation
+    if (!data.email || !data.username || !data.name || !data.password) {
+      return res.status(400).json({ message: "Email, username, name, and password are required" });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ 
+      $or: [{ email: data.email }, { username: data.username }] 
+    });
+    if (existingUser) {
+      return res.status(400).json({ message: "User with this email or username already exists" });
+    }
+
+    // Create user (password will be hashed in the model or you can use bcrypt here)
+    // For now, assuming password is sent and needs to be hashed
+    const bcrypt = await import("bcryptjs");
+    const passwordHash = await bcrypt.default.hash(data.password, 10);
+
+    const newUser = await User.create({
+      ...data,
+      passwordHash,
+      role: data.role || "user",
+    });
+
+    const user = await User.findById(newUser._id).select("-passwordHash");
+    return res.json({
+      status: 201,
+      message: "User created successfully",
+      data: { user },
+    });
+  } catch (e) {
+    console.error("Error creating user:", e);
+    return res.status(500).json({ message: "Failed to create user", error: e.message });
+  }
+};
+
+const updateUserById = async (req, res) => {
+  const resData = {};
+  const data = { ...req.body };
+  const userId = req.params.id;
+
+  try {
+    if (data.email) {
+      let email_get = sanitizeInput(data.email);
+      if (regEmailTest(email_get) === 0) {
+        resData.message = "Email is not valid";
+        return res.status(400).json(resData);
+      }
+    }
+
+    if (data.name) {
+      let name_get = sanitizeInput(data.name);
+      if (isAlphabetOnly(name_get) === 0) {
+        resData.message = "Name invalid: Only characters are allowed";
+        return res.status(400).json(resData);
+      } else if (charLength(name_get, 6, 35) === 0) {
+        resData.message = "Name invalid: Number of characters should be from 6 to 35";
+        return res.status(400).json(resData);
+      }
+    }
+
+    if (data.username) {
+      let username_get = sanitizeInput(data.username);
+      if (charLength(username_get, 6, 35) === 0) {
+        resData.message = "Username invalid: Number of characters should be from 6 to 35";
+        return res.status(400).json(resData);
+      }
+
+      const usernameCheck = await User.findOne({ username: username_get, _id: { $ne: userId } });
+      if (usernameCheck) {
+        resData.message = "Username already exists";
+        return res.status(400).json(resData);
+      }
+    }
+
+    // Hash password if provided
+    if (data.password) {
+      const bcrypt = await import("bcryptjs");
+      data.passwordHash = await bcrypt.default.hash(data.password, 10);
+      delete data.password;
+    }
+
+    const u = await User.findByIdAndUpdate(userId, data, {
+      new: true,
+    }).select("-passwordHash");
+
+    if (u) {
+      return res.json({
+        status: 200,
+        message: "User Updated Successfully",
+        data: { user: u },
+      });
+    } else {
+      return res.status(404).json({ message: "User not found" });
+    }
+  } catch (e) {
+    console.error("Error updating user:", e);
+    return res.status(500).json({ message: "Failed to update user", error: e.message });
+  }
+};
+
+const deleteUserById = async (req, res) => {
+  const userId = req.params.id;
+
+  try {
+    const user = await User.findByIdAndDelete(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    return res.json({
+      status: 200,
+      message: "User deleted successfully",
+    });
+  } catch (e) {
+    console.error("Error deleting user:", e);
+    return res.status(500).json({ message: "Failed to delete user", error: e.message });
+  }
+};
+
 export default {
   getMe,
   getUserByUsername,
   updateUser,
   searchUsers,
+  getAllUsers,
+  createUser,
+  updateUserById,
+  deleteUserById,
 };

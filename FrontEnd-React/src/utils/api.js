@@ -116,6 +116,20 @@ export const userAPI = {
   update: (username, data) => api.put(`/users/${username}`, data),
   search: (query) => api.get(`/users/search?q=${query}`),
   getByUsername: (username) => api.get(`/users/${username}`),
+  // Admin endpoints
+  getAll: () => api.get("/users/admin/all"),
+  create: (data) => api.post("/users/admin/create", data),
+  updateById: (id, data) => api.put(`/users/admin/${id}`, data),
+  deleteById: (id) => api.delete(`/users/admin/${id}`),
+};
+
+// Plan API
+export const planAPI = {
+  getAll: () => api.get("/plans/getPlans"),
+  get: (id) => api.get(`/plans/getPlan/${id}`),
+  create: (data) => api.post("/plans/createPlan", data),
+  update: (id, data) => api.put(`/plans/updatePlan/${id}`, data),
+  delete: (id) => api.delete(`/plans/deletePlan/${id}`),
 };
 
 export default api;
