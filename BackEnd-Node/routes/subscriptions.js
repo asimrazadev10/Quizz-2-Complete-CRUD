@@ -16,11 +16,9 @@ router.post(
   ],
   sc.createSubscription
 );
-router.get(
-  "/workspace/:workspace-id",
-  authenticate,
-  sc.getSubscriptionsByWorkspace
-);
+
+// FIX: Change workspace-id to workspaceId
+router.get("/workspace/:workspaceId", authenticate, sc.getSubscriptionsByWorkspace);
 router.get("/:id", sc.getSubscription);
 router.put("/:id", authenticate, sc.updateSubscription);
 router.delete("/:id", authenticate, sc.deleteSubscription);

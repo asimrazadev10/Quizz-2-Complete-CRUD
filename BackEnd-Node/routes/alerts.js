@@ -2,11 +2,11 @@ import express from "express";
 const router = express.Router();
 import { authenticate } from "../middleware/auth.js";
 import ac from "../controllers/alertController.js";
-
 import { body } from "express-validator";
 
+// FIX: Change /create-alert to /
 router.post(
-  "/create-alert",
+  "/",
   authenticate,
   [
     body("subscriptionId")
@@ -19,13 +19,13 @@ router.post(
   ],
   ac.createAlert
 );
-router.get(
-  "/alerts/subscription/:subscriptionId",
-  authenticate,
-  ac.getAlertsBySubscription
-);
-router.get("/alert/:id", authenticate, ac.getAlert);
-router.put("/alert/:id", authenticate, ac.updateAlert);
-router.delete("/alert/:id", authenticate, ac.deleteAlert);
+
+// FIX: Remove /alerts prefix
+router.get("/subscription/:subscriptionId", authenticate, ac.getAlertsBySubscription);
+
+// FIX: Remove /alert prefix
+router.get("/:id", authenticate, ac.getAlert);
+router.put("/:id", authenticate, ac.updateAlert);
+router.delete("/:id", authenticate, ac.deleteAlert);
 
 export default router;

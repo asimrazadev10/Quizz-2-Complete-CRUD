@@ -3,36 +3,36 @@ import Workspace from "../models/Workspace.js";
 
 import { validationResult } from "express-validator";
 
-// const createBudget = async (req, res) => {
-//   const data = req.body;
+const createBudget = async (req, res) => {
+  const data = req.body;
 
-//   try {
-//     // Verify workspace ownership
-//     const ws = await Workspace.findOne({
-//       _id: data.workspaceId,
-//       ownerId: req.userId,
-//     });
+  try {
+    // Verify workspace ownership
+    const ws = await Workspace.findOne({
+      _id: data.workspaceId,
+      ownerId: req.userId,
+    });
 
-//     if (!ws) {
-//       return res.status(403).json({ message: "Not allowed to access workspace" });
-//     }
+    if (!ws) {
+      return res.status(403).json({ message: "Not allowed to access workspace" });
+    }
 
-//     const budget = await Budget.create({
-//       workspaceId: data.workspaceId,
-//       monthlyCap: Number(data.monthlyCap),
-//       alertThreshold: Number(data.alertThreshold),
-//     });
+    const budget = await Budget.create({
+      workspaceId: data.workspaceId,
+      monthlyCap: Number(data.monthlyCap),
+      alertThreshold: Number(data.alertThreshold),
+    });
 
-//     return res.json({
-//       status: 201,
-//       message: "Budget created successfully",
-//       budget,
-//     });
-//   } catch (e) {
-//     console.error("Error creating budget:", e);
-//     return res.status(500).json({ message: "Failed to create budget" });
-//   }
-// };
+    return res.json({
+      status: 201,
+      message: "Budget created successfully",
+      budget,
+    });
+  } catch (e) {
+    console.error("Error creating budget:", e);
+    return res.status(500).json({ message: "Failed to create budget" });
+  }
+};
 
 const getBudgetByWorkspace = async (req, res) => {
   const workspaceId = req.params.workspaceId;
@@ -101,33 +101,33 @@ const updateBudget = async (req, res) => {
   }
 };
 
-// const deleteBudget = async (req, res) => {
-//   const budgetId = req.params.id;
+const deleteBudget = async (req, res) => {
+  const budgetId = req.params.id;
 
-//   try {
-//     const budget = await Budget.findById(budgetId);
-//     if (!budget)
-//       return res.status(404).json({ message: "Budget not found" });
+  try {
+    const budget = await Budget.findById(budgetId);
+    if (!budget)
+      return res.status(404).json({ message: "Budget not found" });
 
-//     const ws = await Workspace.findOne({
-//       _id: budget.workspaceId,
-//       ownerId: req.userId,
-//     });
+    const ws = await Workspace.findOne({
+      _id: budget.workspaceId,
+      ownerId: req.userId,
+    });
 
-//     if (!ws)
-//       return res.status(403).json({ message: "Not allowed to delete budget" });
+    if (!ws)
+      return res.status(403).json({ message: "Not allowed to delete budget" });
 
-//     await Budget.findByIdAndDelete(budgetId);
+    await Budget.findByIdAndDelete(budgetId);
 
-//     return res.json({
-//       status: 200,
-//       message: "Budget deleted successfully",
-//     });
-//   } catch (e) {
-//     console.error("Error deleting budget:", e);
-//     return res.status(500).json({ message: "Failed to delete budget" });
-//   }
-// };
+    return res.json({
+      status: 200,
+      message: "Budget deleted successfully",
+    });
+  } catch (e) {
+    console.error("Error deleting budget:", e);
+    return res.status(500).json({ message: "Failed to delete budget" });
+  }
+};
 
 export default {
   getBudgetByWorkspace,

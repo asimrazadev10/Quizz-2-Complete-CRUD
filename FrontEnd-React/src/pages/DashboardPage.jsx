@@ -59,6 +59,25 @@ import api, {
   userAPI 
 } from "../utils/api";
 
+// Currency formatter helper
+const formatCurrency = (amount, currency = 'USD') => {
+  const currencySymbols = {
+    'USD': '$', 'PKR': 'Rs.', 'EUR': '€', 'GBP': '£',
+    'INR': '₹', 'JPY': '¥', 'CNY': '¥', 'AUD': 'A$',
+    'CAD': 'C$', 'CHF': 'CHF', 'AED': 'د.إ', 'SAR': '﷼',
+  };
+  
+  const symbol = currencySymbols[currency?.toUpperCase()] || currency;
+  
+  if (['PKR', 'INR'].includes(currency?.toUpperCase())) {
+    return `${symbol} ${Number(amount).toFixed(2)}`;
+  }
+  
+  return `${symbol}${Number(amount).toFixed(2)}`;
+};
+
+
+
 const DashboardPage = () => {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -169,15 +188,15 @@ const DashboardPage = () => {
     
     setLoading(true);
     try {
-      // Fetch subscriptions
+      // Fetch subscriptions - FIX: use _id instead of .id
       const subsResponse = await subscriptionAPI.getByWorkspace(currentWorkspace._id);
       setSubscriptions(subsResponse.data);
       
-      // Fetch clients
+      // Fetch clients - FIX: use _id instead of .id
       const clientsResponse = await clientAPI.getByWorkspace(currentWorkspace._id);
       setClients(clientsResponse.data);
       
-      // Fetch budget
+      // Fetch budget - FIX: use _id instead of .id
       try {
         const budgetResponse = await budgetAPI.getByWorkspace(currentWorkspace._id);
         setBudgets([budgetResponse.data]);
@@ -216,56 +235,90 @@ const DashboardPage = () => {
       setLoading(false);
     }
   };
+  
 
   // CRUD Operations
   const createSubscription = async (e) => {
     e.preventDefault();
+  
+    if (!currentWorkspace || !currentWorkspace._id) {
+      alert("Please select or create a workspace before adding a subscription.");
+      return;
+    }
+  
     try {
       const formData = {
         ...subscriptionForm,
         workspaceId: currentWorkspace._id,
         amount: Number(subscriptionForm.amount),
-        tags: subscriptionForm.tags.split(',').map(tag => tag.trim()).filter(tag => tag),
-        nextRenewalDate: new Date(subscriptionForm.nextRenewalDate).toISOString()
+        tags: subscriptionForm.tags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter((tag) => tag),
+        nextRenewalDate: subscriptionForm.nextRenewalDate
+          ? new Date(subscriptionForm.nextRenewalDate).toISOString()
+          : null,
       };
-      
+  
       const response = await subscriptionAPI.create(formData);
       if (response.data.subscription) {
-        setSubscriptions(prev => [...prev, response.data.subscription]);
+        setSubscriptions((prev) => [...prev, response.data.subscription]);
         setShowSubscriptionForm(false);
         resetSubscriptionForm();
-        fetchWorkspaceData(); // Refresh data
+        fetchWorkspaceData();
       }
     } catch (error) {
       console.error("Error creating subscription:", error);
-      alert("Error creating subscription: " + (error.response?.data?.message || error.message));
+      alert(
+        "Error creating subscription: " +
+          (error.response?.data?.message || error.message)
+      );
     }
   };
+  
 
   const updateSubscription = async (e) => {
     e.preventDefault();
+  
+    if (!editingItem || !editingItem._id) {
+      alert("No subscription selected for editing.");
+      return;
+    }
+  
     try {
       const formData = {
         ...subscriptionForm,
         amount: Number(subscriptionForm.amount),
-        tags: subscriptionForm.tags.split(',').map(tag => tag.trim()).filter(tag => tag),
-        nextRenewalDate: new Date(subscriptionForm.nextRenewalDate).toISOString()
+        tags: subscriptionForm.tags
+          .split(",")
+          .map((tag) => tag.trim())
+          .filter((tag) => tag),
+        nextRenewalDate: subscriptionForm.nextRenewalDate
+          ? new Date(subscriptionForm.nextRenewalDate).toISOString()
+          : null,
       };
-      
+  
+      // FIX: use _id instead of .id
       const response = await subscriptionAPI.update(editingItem._id, formData);
       if (response.data.subscription) {
-        setSubscriptions(prev => prev.map(sub => 
-          sub._id === editingItem._id ? response.data.subscription : sub
-        ));
+        setSubscriptions((prev) =>
+          prev.map((sub) =>
+            sub._id === editingItem._id ? response.data.subscription : sub
+          )
+        );
         setShowSubscriptionForm(false);
         setEditingItem(null);
         resetSubscriptionForm();
       }
     } catch (error) {
       console.error("Error updating subscription:", error);
-      alert("Error updating subscription: " + (error.response?.data?.message || error.message));
+      alert(
+        "Error updating subscription: " +
+          (error.response?.data?.message || error.message)
+      );
     }
   };
+  
 
   const deleteSubscription = async (subscriptionId) => {
     if (!window.confirm("Are you sure you want to delete this subscription?")) return;
@@ -273,53 +326,14 @@ const DashboardPage = () => {
     try {
       await subscriptionAPI.delete(subscriptionId);
       setSubscriptions(prev => prev.filter(sub => sub._id !== subscriptionId));
-      // Also remove related invoices and alerts from state
-      setInvoices(prev => prev.filter(inv => inv.subscriptionId !== subscriptionId));
-      setAlerts(prev => prev.filter(alert => alert.subscriptionId !== subscriptionId));
+      setInvoices(prev => prev.filter(inv => inv.subscriptionId._id !== subscriptionId));
+      setAlerts(prev => prev.filter(alert => alert.subscriptionId._id !== subscriptionId));
     } catch (error) {
       console.error("Error deleting subscription:", error);
       alert("Error deleting subscription: " + (error.response?.data?.message || error.message));
     }
   };
-
-  const createClient = async (e) => {
-    e.preventDefault();
-    try {
-      const formData = {
-        ...clientForm,
-        workspaceId: currentWorkspace._id
-      };
-      
-      const response = await clientAPI.create(formData);
-      if (response.data.client) {
-        setClients(prev => [...prev, response.data.client]);
-        setShowClientForm(false);
-        resetClientForm();
-      }
-    } catch (error) {
-      console.error("Error creating client:", error);
-      alert("Error creating client: " + (error.response?.data?.message || error.message));
-    }
-  };
-
-  const updateClient = async (e) => {
-    e.preventDefault();
-    try {
-      const response = await clientAPI.update(editingItem._id, clientForm);
-      if (response.data.client) {
-        setClients(prev => prev.map(client => 
-          client._id === editingItem._id ? response.data.client : client
-        ));
-        setShowClientForm(false);
-        setEditingItem(null);
-        resetClientForm();
-      }
-    } catch (error) {
-      console.error("Error updating client:", error);
-      alert("Error updating client: " + (error.response?.data?.message || error.message));
-    }
-  };
-
+  
   const deleteClient = async (clientId) => {
     if (!window.confirm("Are you sure you want to delete this client?")) return;
     
@@ -331,6 +345,70 @@ const DashboardPage = () => {
       alert("Error deleting client: " + (error.response?.data?.message || error.message));
     }
   };
+  
+
+  const createClient = async (e) => {
+    e.preventDefault();
+  
+    if (!currentWorkspace || !currentWorkspace._id) {
+      alert("Please select or create a workspace before adding a client.");
+      return;
+    }
+  
+    try {
+      const formData = {
+        ...clientForm,
+        workspaceId: currentWorkspace._id,
+      };
+  
+      const response = await clientAPI.create(formData);
+      if (response.data.client) {
+        setClients((prev) => [...prev, response.data.client]);
+        setShowClientForm(false);
+        resetClientForm();
+      }
+    } catch (error) {
+      console.error("Error creating client:", error);
+      alert(
+        "Error creating client: " +
+          (error.response?.data?.message || error.message)
+      );
+    }
+  };
+  
+
+  const updateClient = async (e) => {
+    e.preventDefault();
+  
+    if (!editingItem || !editingItem._id) {
+      alert("No client selected for editing.");
+      return;
+    }
+  
+    try {
+      // FIX: use _id instead of .id
+      const response = await clientAPI.update(editingItem._id, clientForm);
+      if (response.data.client) {
+        setClients((prev) =>
+          prev.map((client) =>
+            client._id === editingItem._id ? response.data.client : client
+          )
+        );
+        setShowClientForm(false);
+        setEditingItem(null);
+        resetClientForm();
+      }
+    } catch (error) {
+      console.error("Error updating client:", error);
+      alert(
+        "Error updating client: " +
+          (error.response?.data?.message || error.message)
+      );
+    }
+  };
+  
+  
+  
 
   const createWorkspace = async (e) => {
     e.preventDefault();
@@ -393,29 +471,38 @@ const DashboardPage = () => {
 
   const updateBudget = async (e) => {
     e.preventDefault();
-    if (!budgets[0]) return;
     
+    if (!budgets[0] || !budgets[0]._id) {  // FIX: Change .id to ._id
+      alert("No budget found to update.");
+      return;
+    }
+  
     try {
       const formData = {
         monthlyCap: Number(budgetForm.monthlyCap),
-        alertThreshold: Number(budgetForm.alertThreshold)
+        alertThreshold: Number(budgetForm.alertThreshold),
       };
+  
+      const response = await budgetAPI.update(budgets[0]._id, formData);  // FIX: Change .id to ._id
       
-      const response = await budgetAPI.update(budgets[0]._id, formData);
       if (response.data.budget) {
-        setBudgets([response.data.budget]);
+        setBudgets([response.data.budget]);  // FIX: Wrap in array
         setBudgetForm({
           monthlyCap: "",
-          alertThreshold: ""
+          alertThreshold: "",
         });
         alert("Budget updated successfully!");
       }
     } catch (error) {
       console.error("Error updating budget:", error);
-      alert("Error updating budget: " + (error.response?.data?.message || error.message));
+      alert(
+        "Error updating budget: " +
+          (error.response?.data?.message || error.message)
+      );
     }
   };
-
+  
+  
   // Form reset functions
   const resetSubscriptionForm = () => {
     setSubscriptionForm({
@@ -514,17 +601,36 @@ const DashboardPage = () => {
   const budgetUsage = currentBudget ? (totalMonthlySpend / currentBudget.monthlyCap) * 100 : 0;
   const budgetStatus = budgetUsage >= (currentBudget?.alertThreshold || 80) ? 'warning' : 'healthy';
 
-  // Sample data for charts
-  const spendingData = [
-    { month: "Jan", amount: 1250 },
-    { month: "Feb", amount: 1450 },
-    { month: "Mar", amount: 1320 },
-    { month: "Apr", amount: 1680 },
-    { month: "May", amount: 1590 },
-    { month: "Jun", amount: totalMonthlySpend || 1750 },
-  ];
+ // REAL-TIME SPENDING DATA
+const spendingData = React.useMemo(() => {
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const currentMonth = new Date().getMonth();
+  const currentYear = new Date().getFullYear();
+  
+  const last6Months = [];
+  for (let i = 5; i >= 0; i--) {
+    const monthIndex = (currentMonth - i + 12) % 12;
+    const year = currentMonth - i < 0 ? currentYear - 1 : currentYear;
+    
+    const monthSpending = invoices
+      .filter(inv => {
+        const invDate = new Date(inv.invoiceDate);
+        return invDate.getMonth() === monthIndex && invDate.getFullYear() === year;
+      })
+      .reduce((sum, inv) => sum + (inv.amount || 0), 0);
+    
+    last6Months.push({
+      month: months[monthIndex],
+      amount: monthSpending || 0
+    });
+  }
+  
+  return last6Months;
+}, [invoices]);
 
-  const categoryData = subscriptions.reduce((acc, sub) => {
+// REAL-TIME CATEGORY DATA
+const categoryData = React.useMemo(() => {
+  return subscriptions.reduce((acc, sub) => {
     const category = sub.category || "Uncategorized";
     const existing = acc.find(item => item.name === category);
     if (existing) {
@@ -538,6 +644,9 @@ const DashboardPage = () => {
     }
     return acc;
   }, []);
+}, [subscriptions]);
+
+  
 
   function getRandomColor() {
     const colors = ["#8b5cf6", "#a78bfa", "#60a5fa", "#db2777", "#4ade80", "#f59e0b", "#84cc16", "#06b6d4"];
@@ -586,15 +695,37 @@ const DashboardPage = () => {
     return (
       <div className="flex min-h-screen bg-black items-center justify-center">
         <div className="text-center">
+          {/* Logo */}
+          <div className="flex items-center justify-center mb-8">
+            <div className="w-16 h-16 bg-gradient-to-br from-purple-600 to-pink-600 rounded-2xl flex items-center justify-center shadow-lg shadow-purple-600/50">
+              <span className="text-white font-bold text-2xl">S</span>
+            </div>
+            <h1 className="text-3xl font-bold text-white ml-4">SubFlow</h1>
+          </div>
+          
+          {/* Spinner */}
           <div className="w-16 h-16 border-4 border-purple-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-white">Loading dashboard...</p>
+          
+          {/* Text */}
+          <p className="text-white text-lg">Loading dashboard...</p>
         </div>
       </div>
     );
   }
-
+  
   return (
     <div className="flex min-h-screen bg-black overflow-hidden pt-16">
+      <style>{`
+        select option {
+          background-color: #1a1a1a;
+          color: white;
+          padding: 8px;
+        }
+        select option:checked {
+          background-color: #7c3aed;
+        }
+      `}</style>
+    
       {/* Sidebar */}
       <aside className={`${sidebarOpen ? "w-72" : "w-20"} fixed lg:sticky top-16 bottom-0 left-0 z-40 bg-gradient-to-b from-black to-purple-900/5 border-r border-white/10 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden`}>
         <div className="flex flex-col h-full">
@@ -679,14 +810,18 @@ const DashboardPage = () => {
             <div className="flex items-center space-x-4">
               {workspaces.length > 0 && (
                 <select 
-                  value={currentWorkspace?._id || ""} 
-                  onChange={(e) => setCurrentWorkspace(workspaces.find(w => w._id === e.target.value))}
-                  className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent"
-                >
-                  {workspaces.map(workspace => (
-                    <option key={workspace._id} value={workspace._id}>{workspace.name}</option>
-                  ))}
-                </select>
+                value={currentWorkspace?._id || ""} 
+                onChange={(e) => setCurrentWorkspace(workspaces.find(w => w._id === e.target.value))}
+                className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-purple-600 focus:border-transparent"
+                style={{ colorScheme: 'dark' }}
+              >
+                {workspaces.map(workspace => (
+                  <option key={workspace._id} value={workspace._id} className="bg-gray-900 text-white">
+                    {workspace.name}
+                  </option>
+                ))}
+              </select>
+              
               )}
               
               <button onClick={() => setShowWorkspaceForm(true)} className="p-2 hover:bg-white/5 rounded-xl transition-colors" title="Create Workspace">
@@ -749,7 +884,8 @@ const DashboardPage = () => {
                       {Math.round(budgetUsage)}%
                     </span>
                   </div>
-                  <h3 className="text-3xl font-bold text-white mb-1">${totalMonthlySpend}</h3>
+                  <h3 className="text-3xl font-bold text-white mb-1">{formatCurrency(totalMonthlySpend, 'USD')}</h3>
+
                   <p className="text-sm text-gray-400">Monthly Spend</p>
                   <div className="mt-4 h-1 bg-white/5 rounded-full overflow-hidden">
                     <div 
@@ -904,7 +1040,7 @@ const DashboardPage = () => {
                           ></div>
                           <span className="text-sm text-gray-400 truncate flex-1">{cat.name}</span>
                         </div>
-                        <span className="text-sm font-semibold text-white">${cat.value}</span>
+                        <span className="text-sm font-semibold text-white">{formatCurrency(cat.value, 'USD')}</span>
                       </div>
                     ))}
                   </div>
@@ -948,7 +1084,8 @@ const DashboardPage = () => {
                             </div>
                           </div>
                           <div className="flex items-center space-x-3">
-                            <span className="font-bold text-white text-sm">${sub.amount}</span>
+                          <span className="font-bold text-white text-sm">{formatCurrency(sub.amount, sub.currency)}</span>
+
                             <span className={`px-2 py-1 rounded-full text-xs font-semibold border ${getStatusColor(renewalStatus.status)}`}>
                               {renewalStatus.status}
                             </span>
@@ -1237,7 +1374,10 @@ const DashboardPage = () => {
                           <td className="py-4 px-4 text-sm text-white font-semibold">
                             {subscription?.name || 'Unknown Subscription'}
                           </td>
-                          <td className="py-4 px-4 text-sm text-white font-bold">${invoice.amount}</td>
+                          <td className="py-4 px-4 text-sm text-white font-bold">
+  {formatCurrency(invoice.amount, subscriptions.find(s => s._id === invoice.subscriptionId)?.currency || 'USD')}
+</td>
+
                           <td className="py-4 px-4 text-sm text-gray-400">
                             {new Date(invoice.invoiceDate).toLocaleDateString()}
                           </td>
@@ -1383,64 +1523,72 @@ const DashboardPage = () => {
               </div>
               
               <div className="grid md:grid-cols-2 gap-6">
-                {budgets.map((budget) => (
-                  <div key={budget._id} className="bg-white/5 hover:bg-white/10 rounded-xl p-6 border border-white/0 hover:border-purple-600/30 transition-all">
-                    <div className="flex items-center space-x-4 mb-6">
-                      <div className="w-12 h-12 bg-gradient-to-br from-green-600/20 to-emerald-600/20 rounded-xl flex items-center justify-center">
-                        <Shield className="w-6 h-6 text-green-400" />
-                      </div>
-                      <div>
-                        <p className="font-bold text-white">Monthly Budget</p>
-                        <p className="text-sm text-gray-400">Workspace: {currentWorkspace?.name}</p>
-                      </div>
-                    </div>
-                    
-                    <div className="space-y-6">
-                      <div>
-                        <label className="block text-sm text-gray-400 mb-2">Monthly Cap</label>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-2xl font-bold text-white">${budget.monthlyCap}</span>
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <label className="block text-sm text-gray-400 mb-2">Alert Threshold</label>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-2xl font-bold text-white">{budget.alertThreshold}%</span>
-                        </div>
-                        <p className="text-xs text-gray-500 mt-1">
-                          Alert when spending reaches ${Math.round(budget.monthlyCap * (budget.alertThreshold / 100))}
-                        </p>
-                      </div>
-                      
-                      <div className="pt-4 border-t border-white/10">
-                        <div className="flex justify-between text-sm text-gray-400 mb-2">
-                          <span>Current Spending</span>
-                          <span>${totalMonthlySpend} / ${budget.monthlyCap}</span>
-                        </div>
-                        <div className="w-full bg-white/5 rounded-full h-3">
-                          <div 
-                            className={`h-3 rounded-full transition-all duration-500 ${
-                              budgetUsage >= budget.alertThreshold 
-                                ? 'bg-gradient-to-r from-red-600 to-pink-600' 
-                                : 'bg-gradient-to-r from-green-600 to-emerald-600'
-                            }`}
-                            style={{ width: `${Math.min(100, budgetUsage)}%` }}
-                          ></div>
-                        </div>
-                        <div className="flex justify-between text-xs text-gray-500 mt-2">
-                          <span>{Math.round(budgetUsage)}% used</span>
-                          <span className={totalMonthlySpend > budget.monthlyCap ? 'text-red-400' : ''}>
-                            {totalMonthlySpend > budget.monthlyCap 
-                              ? `Over budget by $${totalMonthlySpend - budget.monthlyCap}` 
-                              : `$${budget.monthlyCap - totalMonthlySpend} remaining`
-                            }
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+              {budgets.map((budget) => (
+  <div key={budget._id} className="bg-white/5 hover:bg-white/10 rounded-xl p-6 border border-white/0 hover:border-purple-600/30 transition-all">
+    <div className="flex items-center space-x-4 mb-6">
+      <div className="w-12 h-12 bg-gradient-to-br from-green-600/20 to-emerald-600/20 rounded-xl flex items-center justify-center">
+        <Shield className="w-6 h-6 text-green-400" />
+      </div>
+      <div>
+        <p className="font-bold text-white">Monthly Budget</p>
+        <p className="text-sm text-gray-400">Workspace: {currentWorkspace?.name}</p>
+      </div>
+    </div>
+
+    <div className="space-y-6">
+      {/* Monthly Cap */}
+      <div>
+        <label className="block text-sm text-gray-400 mb-2">Monthly Cap</label>
+        <div className="flex items-center space-x-2">
+          <span className="text-2xl font-bold text-white">
+            {formatCurrency(Number(budget.monthlyCap) || 0, 'USD')}
+          </span>
+        </div>
+      </div>
+
+      {/* Alert Threshold */}
+      <div>
+        <label className="block text-sm text-gray-400 mb-2">Alert Threshold</label>
+        <div className="flex items-center space-x-2">
+          <span className="text-2xl font-bold text-white">
+            {Number(budget.alertThreshold) || 0}%
+          </span>
+        </div>
+        <p className="text-xs text-gray-500 mt-1">
+          Alert when spending reaches ${Math.round((Number(budget.monthlyCap) || 0) * (Number(budget.alertThreshold) || 0) / 100)}
+        </p>
+      </div>
+
+      {/* Progress Bar */}
+      <div className="pt-4 border-t border-white/10">
+        <div className="flex justify-between text-sm text-gray-400 mb-2">
+          <span>Current Spending</span>
+          <span>{formatCurrency(totalMonthlySpend, 'USD')} / {formatCurrency(Number(budget.monthlyCap) || 0, 'USD')}</span>
+        </div>
+        <div className="w-full bg-white/5 rounded-full h-3">
+          <div 
+            className={`h-3 rounded-full transition-all duration-500 ${
+              budgetUsage >= (Number(budget.alertThreshold) || 80) 
+                ? 'bg-gradient-to-r from-red-600 to-pink-600' 
+                : 'bg-gradient-to-r from-green-600 to-emerald-600'
+            }`} 
+            style={{ width: `${Math.min(100, budgetUsage || 0)}%` }}
+          ></div>
+        </div>
+        <div className="flex justify-between text-xs text-gray-500 mt-2">
+          <span>{Math.round(budgetUsage || 0)}% used</span>
+          <span className={totalMonthlySpend > (Number(budget.monthlyCap) || 0) ? 'text-red-400' : ''}>
+            {totalMonthlySpend > (Number(budget.monthlyCap) || 0) 
+              ? `Over budget by ${formatCurrency(totalMonthlySpend - (Number(budget.monthlyCap) || 0), 'USD')}` 
+              : `${formatCurrency((Number(budget.monthlyCap) || 0) - totalMonthlySpend, 'USD')} remaining`
+            }
+          </span>
+        </div>
+      </div>
+    </div>
+  </div>
+))}
+
                 
                 {budgets.length === 0 && (
                   <div className="col-span-2 text-center py-12">
@@ -1559,27 +1707,27 @@ const DashboardPage = () => {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Currency</label>
-                  <select 
+                  <select style={{ colorScheme: 'dark' }}
                     value={subscriptionForm.currency} 
                     onChange={(e) => setSubscriptionForm({...subscriptionForm, currency: e.target.value})} 
                     className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
                   >
-                    <option value="USD">USD</option>
-                    <option value="EUR">EUR</option>
-                    <option value="GBP">GBP</option>
-                    <option value="PKR">PKR</option>
+                    <option value="USD" className="bg-gray-900 text-white">USD</option>
+                    <option value="EUR" className="bg-gray-900 text-white">EUR</option>
+                    <option value="GBP" className="bg-gray-900 text-white">GBP</option>
+                    <option value="PKR" className="bg-gray-900 text-white">PKR</option>
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Period *</label>
-                  <select 
+                  <select style={{ colorScheme: 'dark' }}
                     value={subscriptionForm.period} 
                     onChange={(e) => setSubscriptionForm({...subscriptionForm, period: e.target.value})} 
                     className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
                     required
                   >
-                    <option value="monthly">Monthly</option>
-                    <option value="yearly">Yearly</option>
+                    <option value="monthly" className="bg-gray-900 text-white">Monthly</option>
+                    <option value="yearly" className="bg-gray-900 text-white">Yearly</option>
                   </select>
                 </div>
                 <div>
@@ -1745,13 +1893,13 @@ const DashboardPage = () => {
             <form onSubmit={createInvoice} className="space-y-4">
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Subscription *</label>
-                <select 
+                <select style={{ colorScheme: 'dark' }}
                   value={invoiceForm.subscriptionId} 
                   onChange={(e) => setInvoiceForm({...invoiceForm, subscriptionId: e.target.value})} 
                   className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
                   required
                 >
-                  <option value="">Select Subscription</option>
+                  <option value="" className="bg-gray-900 text-white">Select Subscription</option>
                   {subscriptions.map(sub => (
                     <option key={sub._id} value={sub._id}>{sub.name}</option>
                   ))}
@@ -1805,14 +1953,14 @@ const DashboardPage = () => {
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Source</label>
-                <select 
+                <select style={{ colorScheme: 'dark' }}
                   value={invoiceForm.source} 
                   onChange={(e) => setInvoiceForm({...invoiceForm, source: e.target.value})} 
                   className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white"
                 >
-                  <option value="email">Email</option>
-                  <option value="upload">Upload</option>
-                  <option value="api">API</option>
+                  <option value="email" className="bg-gray-900 text-white">Email</option>
+                  <option value="upload" className="bg-gray-900 text-white">Upload</option>
+                  <option value="api" className="bg-gray-900 text-white">API</option>
                 </select>
               </div>
               <div className="flex gap-3">
@@ -1838,13 +1986,13 @@ const DashboardPage = () => {
             <form onSubmit={createAlert} className="space-y-4">
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Subscription *</label>
-                <select 
+                <select style={{ colorScheme: 'dark' }}
                   value={alertForm.subscriptionId} 
                   onChange={(e) => setAlertForm({...alertForm, subscriptionId: e.target.value})} 
                   className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
                   required
                 >
-                  <option value="">Select Subscription</option>
+                  <option value="" className="bg-gray-900 text-white">Select Subscription</option>
                   {subscriptions.map(sub => (
                     <option key={sub._id} value={sub._id}>{sub.name}</option>
                   ))}
@@ -1852,15 +2000,15 @@ const DashboardPage = () => {
               </div>
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Alert Type *</label>
-                <select 
+                <select style={{ colorScheme: 'dark' }}
                   value={alertForm.type} 
                   onChange={(e) => setAlertForm({...alertForm, type: e.target.value})} 
                   className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white" 
                   required
                 >
-                  <option value="renewal">Renewal</option>
-                  <option value="budget">Budget</option>
-                  <option value="invoice-missing">Invoice Missing</option>
+                  <option value="renewal" className="bg-gray-900 text-white">Renewal</option>
+                  <option value="budget" className="bg-gray-900 text-white">Budget</option>
+                  <option value="invoice-missing" className="bg-gray-900 text-white">Invoice Missing</option>
                 </select>
               </div>
               <div>

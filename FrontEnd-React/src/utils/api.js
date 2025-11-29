@@ -30,7 +30,6 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem("token");
       window.dispatchEvent(new Event("authChanged"));
-      // Don't redirect automatically, let components handle it
     }
     return Promise.reject(error);
   }
@@ -42,7 +41,6 @@ export const authAPI = {
     const response = await api.post("/auth/register", userData);
     return response.data;
   },
-
   login: async (email, password) => {
     const response = await api.post("/auth/login", { email, password });
     return response.data;
@@ -58,9 +56,9 @@ export const subscriptionAPI = {
   delete: (id) => api.delete(`/subscriptions/${id}`),
 };
 
-// Client API
+// Client API - FIX: Change /subscribe to /
 export const clientAPI = {
-  create: (data) => api.post("/clients/subscribe", data),
+  create: (data) => api.post("/clients/", data),
   getByWorkspace: (workspaceId) => api.get(`/clients/workspace/${workspaceId}`),
   get: (id) => api.get(`/clients/${id}`),
   update: (id, data) => api.put(`/clients/${id}`, data),
@@ -76,29 +74,31 @@ export const workspaceAPI = {
   delete: (id) => api.delete(`/workspaces/${id}`),
 };
 
-// Invoice API
+// Invoice API - FIX: Remove redundant path segments
 export const invoiceAPI = {
-  create: (data) => api.post("/invoices/create-invoice", data),
-  getBySubscription: (subscriptionId) => api.get(`/invoices/invoices/subscription/${subscriptionId}`),
-  get: (id) => api.get(`/invoices/invoice/${id}`),
-  update: (id, data) => api.put(`/invoices/invoice/${id}`, data),
-  delete: (id) => api.delete(`/invoices/invoice/${id}`),
+  create: (data) => api.post("/invoices/", data),
+  getBySubscription: (subscriptionId) => api.get(`/invoices/subscription/${subscriptionId}`),
+  get: (id) => api.get(`/invoices/${id}`),
+  update: (id, data) => api.put(`/invoices/${id}`, data),
+  delete: (id) => api.delete(`/invoices/${id}`),
 };
 
-// Alert API
+// Alert API - FIX: Remove redundant path segments
 export const alertAPI = {
-  create: (data) => api.post("/alerts/create-alert", data),
-  getBySubscription: (subscriptionId) => api.get(`/alerts/alerts/subscription/${subscriptionId}`),
-  get: (id) => api.get(`/alerts/alert/${id}`),
-  update: (id, data) => api.put(`/alerts/alert/${id}`, data),
-  delete: (id) => api.delete(`/alerts/alert/${id}`),
+  create: (data) => api.post("/alerts/", data),
+  getBySubscription: (subscriptionId) => api.get(`/alerts/subscription/${subscriptionId}`),
+  get: (id) => api.get(`/alerts/${id}`),
+  update: (id, data) => api.put(`/alerts/${id}`, data),
+  delete: (id) => api.delete(`/alerts/${id}`),
 };
 
 // Budget API
+// Budget API
 export const budgetAPI = {
   getByWorkspace: (workspaceId) => api.get(`/budgets/${workspaceId}`),
-  update: (id, data) => api.put(`/budgets/${id}`, data),
+  update: (id, data) => api.put(`/budgets/${id}`, data),  // This is correct now
 };
+
 
 // User API
 export const userAPI = {

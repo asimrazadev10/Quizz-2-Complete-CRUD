@@ -7,23 +7,28 @@ import { validationResult } from "express-validator";
 const createWorkspace = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
+  
   const data = req.body;
-
   const errors = validationResult(req);
+  
   if (!errors.isEmpty()) {
+    await session.abortTransaction();
+    session.endSession();
     return res.status(400).json({ errors: errors.array() });
   }
-  
+
   try {
-    const ws = await Workspace.create(
+    const wsArray = await Workspace.create(
       [
         {
           name: sanitizeInput(data.name),
           ownerId: req.userId,
-        },
+        }
       ],
       { session }
     );
+    
+    const ws = wsArray[0];
 
     // Every workspace needs a budget to function
     await Budget.create(
@@ -32,13 +37,13 @@ const createWorkspace = async (req, res) => {
           workspaceId: ws._id,
           monthlyCap: 1000, // Default cap
           alertThreshold: 80,
-        },
+        }
       ],
       { session }
     );
 
     await session.commitTransaction();
-
+    
     return res.json({
       status: 201,
       message: "Workspace created successfully",
@@ -47,11 +52,15 @@ const createWorkspace = async (req, res) => {
   } catch (e) {
     await session.abortTransaction();
     console.error("Error creating workspace:", e);
-    return res.status(500).json({ message: "Failed to create workspace" });
+    return res.status(500).json({ 
+      message: "Failed to create workspace",
+      error: e.message 
+    });
   } finally {
     session.endSession();
   }
 };
+
 
 const getMyWorkspaces = async (req, res) => {
   const userId = req.userId;

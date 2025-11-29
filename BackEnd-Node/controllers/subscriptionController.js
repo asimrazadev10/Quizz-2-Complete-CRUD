@@ -7,10 +7,10 @@ import { validationResult } from "express-validator";
 
 const createSubscription = async (req, res) => {
   const data = req.body;
-
   const errors = validationResult(req);
+  
   if (!errors.isEmpty()) {
-    return res.json({ message: "Validation failed", errors: errors.array() });
+    return res.status(400).json({ message: "Validation failed", errors: errors.array() });
   }
 
   try {
@@ -19,7 +19,7 @@ const createSubscription = async (req, res) => {
       _id: data.workspaceId,
       ownerId: req.userId,
     });
-
+    
     if (!ws) {
       return res
         .status(403)
@@ -33,8 +33,9 @@ const createSubscription = async (req, res) => {
       plan: sanitizeInput(data.plan),
       amount: Number(data.amount),
       currency: sanitizeInput(data.currency || "USD"),
-      period: data.period, // must be monthly or yearly
-      nextRenewalDate: new Date(data.nextRenewalDate),
+      period: data.period,
+      // FIX: Handle null dates properly
+      nextRenewalDate: data.nextRenewalDate ? new Date(data.nextRenewalDate) : null,
       category: sanitizeInput(data.category),
       notes: sanitizeInput(data.notes),
       tags: Array.isArray(data.tags) ? data.tags.map(sanitizeInput) : [],
@@ -47,9 +48,10 @@ const createSubscription = async (req, res) => {
     });
   } catch (e) {
     console.error("Error creating subscription:", e);
-    return res.status(500).json({ message: "Failed to create subscription" });
+    return res.status(500).json({ message: "Failed to create subscription", error: e.message });
   }
 };
+
 
 const getSubscriptionsByWorkspace = async (req, res) => {
   const workspaceId = req.params.workspaceId;

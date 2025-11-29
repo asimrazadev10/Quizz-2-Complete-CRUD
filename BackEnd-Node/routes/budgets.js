@@ -6,14 +6,13 @@ import { body } from "express-validator";
 
 router.get("/:workspaceId", authenticate, bc.getBudgetByWorkspace);
 
+// FIX: Change :budgetId to :id
 router.put(
-  "/:budgetId",
+  "/:id",  // Changed from /:budgetId
   authenticate,
   [
     body("monthlyCap").isNumeric().withMessage("monthlyCap must be a number"),
-    body("alertThreshold")
-    .isNumeric()
-    .withMessage("alertThreshold must be a number"),
+    body("alertThreshold").isNumeric().withMessage("alertThreshold must be a number"),
   ],
   bc.updateBudget
 );

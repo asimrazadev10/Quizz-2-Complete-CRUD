@@ -2,11 +2,11 @@ import express from "express";
 const router = express.Router();
 import { authenticate } from "../middleware/auth.js";
 import ic from "../controllers/invoiceController.js";
-
 import { body } from "express-validator";
 
+// FIX: Change /create-invoice to /
 router.post(
-  "/create-invoice",
+  "/",
   authenticate,
   [
     body("subscriptionId").isMongoId(),
@@ -17,13 +17,13 @@ router.post(
   ],
   ic.createInvoice
 );
-router.get(
-  "/invoices/subscription/:subscriptionId",
-  authenticate,
-  ic.getInvoicesBySubscription
-);
-router.get("/invoice/:id", authenticate, ic.getInvoice);
-router.put("/invoice/:id", authenticate, ic.updateInvoice);
-router.delete("/invoice/:id", authenticate, ic.deleteInvoice);
+
+// FIX: Remove /invoices prefix
+router.get("/subscription/:subscriptionId", authenticate, ic.getInvoicesBySubscription);
+
+// FIX: Remove /invoice prefix
+router.get("/:id", authenticate, ic.getInvoice);
+router.put("/:id", authenticate, ic.updateInvoice);
+router.delete("/:id", authenticate, ic.deleteInvoice);
 
 export default router;
