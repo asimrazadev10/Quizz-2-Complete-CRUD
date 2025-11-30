@@ -96,6 +96,7 @@ const DashboardPage = () => {
   const [budgets, setBudgets] = useState([]);
   const [currentWorkspace, setCurrentWorkspace] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [spendingPeriod, setSpendingPeriod] = useState("6M"); // "6M" or "1Y"
   const [subscriptionClients, setSubscriptionClients] = useState({}); // Map of subscriptionId -> array of client objects
   const [showManageClientsModal, setShowManageClientsModal] = useState(false);
   const [selectedSubscriptionForClients, setSelectedSubscriptionForClients] = useState(null);
@@ -403,10 +404,21 @@ const DashboardPage = () => {
         setShowSubscriptionForm(false);
         setEditingItem(null);
         resetSubscriptionForm();
-        // Trigger alert checks after updating subscription
+        
+        // Refresh alerts immediately (outdated alerts are removed synchronously on backend)
+        try {
+          if (currentWorkspace) {
+            const alertResponse = await alertAPI.getByWorkspace(currentWorkspace._id);
+            setAlerts(alertResponse.data || []);
+          }
+        } catch (error) {
+          console.error("Error refreshing alerts:", error);
+        }
+        
+        // Trigger alert checks to create new alerts if needed
         try {
           await alertAPI.triggerChecks();
-          // Wait a bit then refresh alerts
+          // Wait a bit then refresh alerts again to get any new alerts
           setTimeout(async () => {
             if (currentWorkspace) {
               const alertResponse = await alertAPI.getByWorkspace(currentWorkspace._id);
@@ -744,6 +756,14 @@ const DashboardPage = () => {
           alertThreshold: "",
         });
         showToast.success("Budget Updated", "Your budget has been updated successfully!");
+        
+        // Refresh alerts after budget update (alerts may be automatically removed if budget is balanced)
+        try {
+          const alertResponse = await alertAPI.getByWorkspace(currentWorkspace._id);
+          setAlerts(alertResponse.data || []);
+        } catch (error) {
+          console.error("Error refreshing alerts after budget update:", error);
+        }
       }
     } catch (error) {
       console.error("Error updating budget:", error);
@@ -852,44 +872,111 @@ const DashboardPage = () => {
   const budgetUsage = currentBudget ? (totalMonthlySpend / currentBudget.monthlyCap) * 100 : 0;
   const budgetStatus = budgetUsage >= (currentBudget?.alertThreshold || 80) ? 'warning' : 'healthy';
 
- // REAL-TIME SPENDING DATA
+ // REAL-TIME SPENDING DATA - Based on subscriptions (matches Monthly Spend card)
 const spendingData = React.useMemo(() => {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const currentMonth = new Date().getMonth();
-  const currentYear = new Date().getFullYear();
+  const now = new Date();
+  const currentMonth = now.getMonth();
+  const currentYear = now.getFullYear();
   
-  const last6Months = [];
-  for (let i = 5; i >= 0; i--) {
-    const monthIndex = (currentMonth - i + 12) % 12;
-    const year = currentMonth - i < 0 ? currentYear - 1 : currentYear;
+  const data = [];
+  const periodMonths = spendingPeriod === "1Y" ? 12 : 6;
+  
+  for (let i = periodMonths - 1; i >= 0; i--) {
+    // Calculate the target month and year correctly
+    const monthOffset = currentMonth - i;
+    let targetYear = currentYear;
+    let targetMonth = monthOffset;
     
-    const monthSpending = invoices
-      .filter(inv => {
-        const invDate = new Date(inv.invoiceDate);
-        return invDate.getMonth() === monthIndex && invDate.getFullYear() === year;
-      })
-      .reduce((sum, inv) => sum + (inv.amount || 0), 0);
+    // Handle year rollover
+    if (monthOffset < 0) {
+      targetYear = currentYear - 1;
+      targetMonth = monthOffset + 12;
+    }
     
-    last6Months.push({
-      month: months[monthIndex],
-      amount: monthSpending || 0
+    const monthIndex = targetMonth;
+    const year = targetYear;
+    
+    // Calculate spending from subscriptions for this month
+    // A subscription counts if it was created on or before the end of this month
+    let monthSpending = 0;
+    
+    if (subscriptions && subscriptions.length > 0) {
+      // Last day of target month (end of month)
+      const targetMonthEnd = new Date(year, monthIndex + 1, 0, 23, 59, 59, 999);
+      
+      monthSpending = subscriptions.reduce((sum, sub) => {
+        // Get subscription creation date
+        let subCreatedAt;
+        if (sub.createdAt) {
+          subCreatedAt = new Date(sub.createdAt);
+        } else {
+          // If no createdAt field, assume subscription exists for all months
+          // This handles cases where createdAt might not be in the response
+          // We'll count it for all months to show current monthly spend
+          subCreatedAt = new Date(0); // Beginning of time, so it counts for all months
+        }
+        
+        // Only count subscriptions that existed by the end of this month
+        // (created on or before the last day of the target month)
+        if (subCreatedAt <= targetMonthEnd) {
+          const subAmount = Number(sub.amount) || 0;
+          
+          // Convert to monthly equivalent based on period
+          let monthlyAmount = subAmount;
+          if (sub.period === 'yearly') {
+            monthlyAmount = subAmount / 12;
+          } else if (sub.period === 'quarterly') {
+            monthlyAmount = subAmount / 3;
+          }
+          // else: monthly, use as is
+          
+          return sum + monthlyAmount;
+        }
+        return sum;
+      }, 0);
+    }
+    
+    const monthLabel = spendingPeriod === "1Y" 
+      ? `${months[monthIndex]} ${year.toString().slice(-2)}`
+      : months[monthIndex];
+    
+    data.push({
+      month: monthLabel,
+      amount: Math.round(monthSpending * 100) / 100, // Round to 2 decimals
+      fullMonth: months[monthIndex],
+      year: year
     });
   }
   
-  return last6Months;
-}, [invoices]);
+  return data;
+}, [subscriptions, spendingPeriod]);
 
 // REAL-TIME CATEGORY DATA
 const categoryData = React.useMemo(() => {
+  if (!subscriptions || subscriptions.length === 0) {
+    return [];
+  }
+  
   return subscriptions.reduce((acc, sub) => {
     const category = sub.category || "Uncategorized";
+    const subAmount = Number(sub.amount) || 0;
+    
+    // Convert to monthly equivalent for consistent comparison
+    let monthlyAmount = subAmount;
+    if (sub.period === 'yearly') {
+      monthlyAmount = subAmount / 12;
+    } else if (sub.period === 'quarterly') {
+      monthlyAmount = subAmount / 3;
+    }
+    
     const existing = acc.find(item => item.name === category);
     if (existing) {
-      existing.value += sub.amount;
+      existing.value += monthlyAmount;
     } else {
       acc.push({ 
         name: category, 
-        value: sub.amount, 
+        value: monthlyAmount, 
         color: getRandomColor() 
       });
     }
@@ -1075,7 +1162,11 @@ const categoryData = React.useMemo(() => {
                 <Building className="w-5 h-5 text-gray-400" />
               </button>
               
-              <button className="relative p-2 hover:bg-white/5 rounded-xl transition-colors">
+              <button 
+                onClick={() => setActiveTab("alerts")}
+                className="relative p-2 hover:bg-white/5 rounded-xl transition-colors"
+                title="View Alerts"
+              >
                 <Bell className="w-5 h-5 text-gray-400" />
                 {urgentAlerts > 0 && <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full animate-pulse"></span>}
               </button>
@@ -1200,10 +1291,24 @@ const categoryData = React.useMemo(() => {
                       <p className="text-sm text-gray-400">Monthly expenditure analysis</p>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <button className="px-3 py-1 bg-purple-600/20 text-purple-400 rounded-lg text-sm font-semibold border border-purple-600/30">
+                      <button 
+                        onClick={() => setSpendingPeriod("6M")}
+                        className={`px-3 py-1 rounded-lg text-sm font-semibold transition-all ${
+                          spendingPeriod === "6M"
+                            ? "bg-purple-600/20 text-purple-400 border border-purple-600/30"
+                            : "bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent"
+                        }`}
+                      >
                         6M
                       </button>
-                      <button className="px-3 py-1 bg-white/5 text-gray-400 rounded-lg text-sm hover:bg-white/10">
+                      <button 
+                        onClick={() => setSpendingPeriod("1Y")}
+                        className={`px-3 py-1 rounded-lg text-sm font-semibold transition-all ${
+                          spendingPeriod === "1Y"
+                            ? "bg-purple-600/20 text-purple-400 border border-purple-600/30"
+                            : "bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent"
+                        }`}
+                      >
                         1Y
                       </button>
                     </div>
@@ -1217,15 +1322,29 @@ const categoryData = React.useMemo(() => {
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#ffffff10" />
-                      <XAxis dataKey="month" stroke="#6b7280" />
-                      <YAxis stroke="#6b7280" />
+                      <XAxis 
+                        dataKey="month" 
+                        stroke="#6b7280" 
+                        tick={{ fill: '#9ca3af', fontSize: 12 }}
+                        angle={spendingPeriod === "1Y" ? -45 : 0}
+                        textAnchor={spendingPeriod === "1Y" ? "end" : "middle"}
+                        height={spendingPeriod === "1Y" ? 60 : 30}
+                      />
+                      <YAxis 
+                        stroke="#6b7280"
+                        tick={{ fill: '#9ca3af', fontSize: 12 }}
+                        tickFormatter={(value) => formatCurrency(value, 'USD')}
+                      />
                       <Tooltip 
                         contentStyle={{ 
                           backgroundColor: "#1a1a1a", 
                           border: "1px solid #ffffff20", 
                           borderRadius: "12px", 
-                          color: "#fff" 
-                        }} 
+                          color: "#fff",
+                          padding: "12px"
+                        }}
+                        formatter={(value) => [formatCurrency(value, 'USD'), 'Spending']}
+                        labelStyle={{ color: '#fff', marginBottom: '8px', fontWeight: 'bold' }}
                       />
                       <Area 
                         type="monotone" 
@@ -1266,8 +1385,10 @@ const categoryData = React.useMemo(() => {
                           backgroundColor: "#1a1a1a", 
                           border: "1px solid #ffffff20", 
                           borderRadius: "12px", 
-                          color: "#fff" 
-                        }} 
+                          color: "#fff",
+                          padding: "12px"
+                        }}
+                        formatter={(value) => formatCurrency(value, 'USD')}
                       />
                     </RePieChart>
                   </ResponsiveContainer>

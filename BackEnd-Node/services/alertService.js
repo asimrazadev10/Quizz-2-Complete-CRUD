@@ -25,6 +25,45 @@ const calculateMonthlySpending = async (workspaceId) => {
 };
 
 /**
+ * Remove budget alerts when budget is balanced or increased
+ * Removes alerts when: monthlySpending <= monthlyCap AND budgetUsage < alertThreshold
+ */
+const removeBudgetAlertsIfBalanced = async (workspaceId) => {
+  try {
+    const budget = await Budget.findOne({ workspaceId });
+    if (!budget) {
+      return; // No budget found, nothing to check
+    }
+
+    const monthlySpending = await calculateMonthlySpending(workspaceId);
+    const budgetUsage = (monthlySpending / budget.monthlyCap) * 100;
+
+    // If budget is balanced (spending within cap and below threshold), remove alerts
+    if (monthlySpending <= budget.monthlyCap && budgetUsage < budget.alertThreshold) {
+      // Get all subscriptions for this workspace
+      const subscriptions = await Subscription.find({ workspaceId });
+      if (subscriptions.length === 0) {
+        return; // No subscriptions, nothing to clean up
+      }
+
+      const subscriptionIds = subscriptions.map(sub => sub._id);
+
+      // Delete all budget alerts for this workspace
+      const deleteResult = await Alert.deleteMany({
+        subscriptionId: { $in: subscriptionIds },
+        type: "budget"
+      });
+
+      if (deleteResult.deletedCount > 0) {
+        console.log(`✅ Removed ${deleteResult.deletedCount} budget alert(s) for workspace ${workspaceId}. Budget is now balanced (${budgetUsage.toFixed(2)}% used)`);
+      }
+    }
+  } catch (error) {
+    console.error("Error removing budget alerts:", error);
+  }
+};
+
+/**
  * Check if budget is exceeded and create alert if needed
  */
 const checkBudgetAlerts = async () => {
@@ -36,6 +75,9 @@ const checkBudgetAlerts = async () => {
     
     for (const budget of budgets) {
       const monthlySpending = await calculateMonthlySpending(budget.workspaceId);
+      
+      // First, check if we should remove existing alerts (budget balanced or increased)
+      await removeBudgetAlertsIfBalanced(budget.workspaceId);
       
       // Get all subscriptions for this workspace
       const subscriptions = await Subscription.find({ workspaceId: budget.workspaceId });
@@ -107,6 +149,57 @@ const checkBudgetAlerts = async () => {
     }
   } catch (error) {
     console.error("Error checking budget alerts:", error);
+  }
+};
+
+/**
+ * Remove outdated renewal alerts for a subscription when renewal date is updated
+ * Removes alerts that are no longer valid (e.g., when renewal date is moved forward)
+ */
+const removeOutdatedRenewalAlerts = async (subscriptionId, newRenewalDate) => {
+  try {
+    if (!newRenewalDate) {
+      // If renewal date is removed, delete all renewal alerts for this subscription
+      const deleteResult = await Alert.deleteMany({
+        subscriptionId: subscriptionId,
+        type: "renewal"
+      });
+      if (deleteResult.deletedCount > 0) {
+        console.log(`✅ Removed ${deleteResult.deletedCount} renewal alert(s) for subscription ${subscriptionId} (renewal date removed)`);
+      }
+      return;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const renewalDate = new Date(newRenewalDate);
+    renewalDate.setHours(0, 0, 0, 0);
+
+    // If renewal date is in the past, remove all alerts
+    if (renewalDate <= today) {
+      const deleteResult = await Alert.deleteMany({
+        subscriptionId: subscriptionId,
+        type: "renewal"
+      });
+      if (deleteResult.deletedCount > 0) {
+        console.log(`✅ Removed ${deleteResult.deletedCount} renewal alert(s) for subscription ${subscriptionId} (renewal date is in the past)`);
+      }
+      return;
+    }
+
+    // Remove alerts that are for dates before the new renewal date
+    // These are outdated alerts from when the renewal date was earlier
+    const deleteResult = await Alert.deleteMany({
+      subscriptionId: subscriptionId,
+      type: "renewal",
+      dueDate: { $lt: renewalDate }
+    });
+
+    if (deleteResult.deletedCount > 0) {
+      console.log(`✅ Removed ${deleteResult.deletedCount} outdated renewal alert(s) for subscription ${subscriptionId} (renewal date moved forward)`);
+    }
+  } catch (error) {
+    console.error("Error removing outdated renewal alerts:", error);
   }
 };
 
@@ -205,6 +298,8 @@ export default {
   runAlertChecks,
   checkBudgetAlerts,
   checkDeadlineAlerts,
-  calculateMonthlySpending
+  calculateMonthlySpending,
+  removeBudgetAlertsIfBalanced,
+  removeOutdatedRenewalAlerts
 };
 

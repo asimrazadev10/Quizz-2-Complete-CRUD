@@ -157,12 +157,19 @@ const AdminDashboardPage = () => {
         delete formData.password;
       }
       const response = await userAPI.create(formData);
-      if (response.data?.user) {
-        setUsers((prev) => [response.data.user, ...prev]);
-        showToast.success("User Created", `${response.data.user.name} has been created successfully!`);
+      // Backend returns { status: 201, message: "...", data: { user } }
+      const newUser = response.data?.data?.user || response.data?.user;
+      if (newUser) {
+        setUsers((prev) => [newUser, ...prev]);
+        showToast.success("User Created", `${newUser.name || newUser.username} has been created successfully!`);
         setShowUserForm(false);
         resetUserForm();
-        fetchUsers();
+      } else {
+        // If user data is not in expected format, refresh the list
+        showToast.success("User Created", "User has been created successfully!");
+        setShowUserForm(false);
+        resetUserForm();
+        await fetchUsers();
       }
     } catch (error) {
       console.error("Error creating user:", error);

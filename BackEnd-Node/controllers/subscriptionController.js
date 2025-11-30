@@ -43,13 +43,15 @@ const createSubscription = async (req, res) => {
     });
 
     // Trigger alert checks after creating subscription (for immediate alerts)
-    if (subscription.nextRenewalDate) {
-      setTimeout(() => {
-        alertService.checkDeadlineAlerts().catch(err => 
-          console.error("Error checking alerts after subscription creation:", err)
-        );
-      }, 1000);
-    }
+    // Check both deadline alerts and budget alerts (since spending changed)
+    setTimeout(() => {
+      Promise.all([
+        subscription.nextRenewalDate ? alertService.checkDeadlineAlerts() : Promise.resolve(),
+        alertService.removeBudgetAlertsIfBalanced(data.workspaceId)
+      ]).catch(err => 
+        console.error("Error checking alerts after subscription creation:", err)
+      );
+    }, 1000);
 
     return res.json({
       status: 201,
@@ -135,6 +137,9 @@ const updateSubscription = async (req, res) => {
       ? new Date(data.nextRenewalDate)
       : sub.nextRenewalDate;
 
+    // Check if renewal date changed (for removing outdated alerts)
+    const renewalDateChanged = sub.nextRenewalDate?.getTime() !== newRenewalDate?.getTime();
+
     const updated = await Subscription.findByIdAndUpdate(
       id,
       {
@@ -154,14 +159,21 @@ const updateSubscription = async (req, res) => {
       { new: true }
     );
 
-    // Trigger alert checks after updating subscription (for immediate alerts)
-    if (updated.nextRenewalDate) {
-      setTimeout(() => {
-        alertService.checkDeadlineAlerts().catch(err => 
-          console.error("Error checking alerts after subscription update:", err)
-        );
-      }, 1000);
+    // Remove outdated renewal alerts if renewal date changed
+    if (renewalDateChanged) {
+      await alertService.removeOutdatedRenewalAlerts(id, newRenewalDate);
     }
+
+    // Trigger alert checks after updating subscription (for immediate alerts)
+    // Check both deadline alerts and budget alerts (since spending may have changed)
+    setTimeout(() => {
+      Promise.all([
+        updated.nextRenewalDate ? alertService.checkDeadlineAlerts() : Promise.resolve(),
+        alertService.removeBudgetAlertsIfBalanced(sub.workspaceId)
+      ]).catch(err => 
+        console.error("Error checking alerts after subscription update:", err)
+      );
+    }, 1000);
 
     return res.json({
       status: 200,
@@ -193,7 +205,15 @@ const deleteSubscription = async (req, res) => {
         .status(403)
         .json({ message: "Not allowed to delete subscription" });
 
+    const workspaceId = sub.workspaceId;
     await Subscription.findByIdAndDelete(id);
+
+    // Trigger budget alert check after deleting subscription (spending changed)
+    setTimeout(() => {
+      alertService.removeBudgetAlertsIfBalanced(workspaceId).catch(err => 
+        console.error("Error checking alerts after subscription deletion:", err)
+      );
+    }, 1000);
 
     return res.json({
       status: 200,

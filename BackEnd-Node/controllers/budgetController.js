@@ -1,5 +1,6 @@
 import Budget from "../models/Budget.js";
 import Workspace from "../models/Workspace.js";
+import alertService from "../services/alertService.js";
 
 import { validationResult } from "express-validator";
 
@@ -90,6 +91,9 @@ const updateBudget = async (req, res) => {
       },
       { new: true }
     );
+
+    // After budget update, check if alerts should be removed (budget balanced or increased)
+    await alertService.removeBudgetAlertsIfBalanced(budget.workspaceId);
 
     resData.status = 200;
     resData.message = "Budget updated successfully";
