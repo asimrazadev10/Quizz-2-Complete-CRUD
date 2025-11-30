@@ -1,21 +1,59 @@
 import { Link } from "react-router-dom";
+import LogoLoop from "./LogoLoop";
+import {
+  SiGithub,
+  SiFigma,
+  SiAmazonwebservices,
+  SiCloudinary,
+  SiGithubcopilot,
+  SiOpenai,
+  SiClaude,
+  SiSupabase,
+  SiNotion,
+  SiDocker,
+  SiCanva
+} from "react-icons/si";
+
+const subLogos = [
+  { node: <SiFigma />, title: "Figma" },
+  { node: <SiCanva />, title: "Canva" },
+  { node: <SiNotion />, title: "Notion" },
+  { node: <SiGithub />, title: "GitHub" },
+  { node: <SiDocker />, title: "Docker" },
+  { node: <SiAmazonwebservices />, title: "AWS" },
+  { node: <SiSupabase />, title: "Supabase" },
+  { node: <SiCloudinary />, title: "Cloudinary" },
+  { node: <SiGithubcopilot />, title: "GitHub Copilot" },
+  { node: <SiOpenai />, title: "OpenAI" },
+  { node: <SiClaude />, title: "Claude" },
+];
 
 export default function Footer() {
   return (
     <footer className="bg-black border-t border-white/10">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
         {/* Brand strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-6 place-items-center pb-10 mb-10 border-b border-white/10">
-          {["Stripe", "Figma", "Notion", "Canva", "Slack", "GitHub"].map(
-            (brand) => (
-              <span
-                key={brand}
-                className="px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300 hover:text-white hover:bg-white/10 transition-colors"
-              >
-                {brand}
-              </span>
-            )
-          )}
+        <div
+          style={{
+            height: "150px",
+            margin: "20px 0",
+            position: "relative",
+            overflow: "hidden",
+            color: "white",
+          }}
+        >
+          <LogoLoop
+            logos={subLogos}
+            speed={120}
+            direction="left"
+            logoHeight={48}
+            gap={50}
+            hoverSpeed={0}
+            scaleOnHover
+            fadeOut
+            fadeOutColor="#000"
+            ariaLabel="Subscriptions"
+          />
         </div>
         <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 mb-8">
           {/* Brand */}

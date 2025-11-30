@@ -96,7 +96,7 @@ export default function Navigation() {
               </Link>
               {isLoggedIn ? (
                 <div className="flex items-center space-x-4">
-                  <span className="text-gray-300">Welcome!</span>
+                  <span className="btn-gradient px-4 py-2 cursor-default">Welcome!</span>
                   <button 
                     onClick={handleLogout}
                     className="text-gray-300 hover:text-white transition-colors duration-200 hover:underline"
