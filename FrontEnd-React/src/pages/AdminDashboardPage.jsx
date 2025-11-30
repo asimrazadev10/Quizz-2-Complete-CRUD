@@ -69,8 +69,7 @@ const AdminDashboardPage = () => {
   const [planForm, setPlanForm] = useState({
     name: "",
     price: "",
-    featuresJSON: {},
-    featuresJSONString: "{}",
+    features: [], // Array of {key: "", value: ""}
   });
   const [planSearch, setPlanSearch] = useState("");
 
@@ -237,14 +236,13 @@ const AdminDashboardPage = () => {
   const createPlan = async (e) => {
     e.preventDefault();
     try {
-      // Validate JSON
-      let featuresJSON = {};
-      try {
-        featuresJSON = JSON.parse(planForm.featuresJSONString || "{}");
-      } catch (error) {
-        showToast.error("Invalid JSON", "Please enter valid JSON format for features");
-        return;
-      }
+      // Convert features array to JSON object
+      const featuresJSON = {};
+      planForm.features.forEach((feature) => {
+        if (feature.key && feature.key.trim()) {
+          featuresJSON[feature.key.trim()] = feature.value || "";
+        }
+      });
 
       const formData = {
         name: planForm.name,
@@ -272,14 +270,13 @@ const AdminDashboardPage = () => {
       return;
     }
     try {
-      // Validate JSON
-      let featuresJSON = {};
-      try {
-        featuresJSON = JSON.parse(planForm.featuresJSONString || "{}");
-      } catch (error) {
-        showToast.error("Invalid JSON", "Please enter valid JSON format for features");
-        return;
-      }
+      // Convert features array to JSON object
+      const featuresJSON = {};
+      planForm.features.forEach((feature) => {
+        if (feature.key && feature.key.trim()) {
+          featuresJSON[feature.key.trim()] = feature.value || "";
+        }
+      });
 
       const formData = {
         name: planForm.name,
@@ -347,11 +344,14 @@ const AdminDashboardPage = () => {
 
   const editPlan = (plan) => {
     setEditingPlan(plan);
+    // Convert featuresJSON object to array format
+    const features = plan.featuresJSON 
+      ? Object.entries(plan.featuresJSON).map(([key, value]) => ({ key, value: String(value) }))
+      : [];
     setPlanForm({
       name: plan.name || "",
       price: plan.price || "",
-      featuresJSON: plan.featuresJSON || {},
-      featuresJSONString: JSON.stringify(plan.featuresJSON || {}, null, 2),
+      features: features,
     });
     setShowPlanForm(true);
   };
@@ -371,9 +371,28 @@ const AdminDashboardPage = () => {
     setPlanForm({
       name: "",
       price: "",
-      featuresJSON: {},
-      featuresJSONString: "{}",
+      features: [],
     });
+  };
+
+  const addFeature = () => {
+    setPlanForm({
+      ...planForm,
+      features: [...planForm.features, { key: "", value: "" }],
+    });
+  };
+
+  const removeFeature = (index) => {
+    setPlanForm({
+      ...planForm,
+      features: planForm.features.filter((_, i) => i !== index),
+    });
+  };
+
+  const updateFeature = (index, field, value) => {
+    const updatedFeatures = [...planForm.features];
+    updatedFeatures[index] = { ...updatedFeatures[index], [field]: value };
+    setPlanForm({ ...planForm, features: updatedFeatures });
   };
 
   // Logout function
@@ -1018,23 +1037,49 @@ const AdminDashboardPage = () => {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-2">Features (JSON)</label>
-                  <textarea
-                    placeholder='{"feature1": "value1", "feature2": "value2"}'
-                    value={planForm.featuresJSONString}
-                    onChange={(e) => {
-                      setPlanForm({ ...planForm, featuresJSONString: e.target.value });
-                      try {
-                        const parsed = JSON.parse(e.target.value);
-                        setPlanForm(prev => ({ ...prev, featuresJSON: parsed, featuresJSONString: e.target.value }));
-                      } catch {
-                        // Invalid JSON, keep the text for user to fix
-                      }
-                    }}
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400 font-mono text-sm"
-                    rows="6"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Enter valid JSON format for features</p>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="block text-sm text-gray-400">Features</label>
+                    <button
+                      type="button"
+                      onClick={addFeature}
+                      className="px-3 py-1 bg-purple-600/20 hover:bg-purple-600/30 text-purple-400 rounded-lg text-sm font-semibold border border-purple-600/30 transition-all flex items-center space-x-1"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>Add Feature</span>
+                    </button>
+                  </div>
+                  <div className="space-y-2 max-h-60 overflow-y-auto">
+                    {planForm.features.length === 0 ? (
+                      <p className="text-xs text-gray-500 py-4 text-center">No features added. Click "Add Feature" to add one.</p>
+                    ) : (
+                      planForm.features.map((feature, index) => (
+                        <div key={index} className="flex items-center space-x-2 p-3 bg-white/5 rounded-lg border border-white/10">
+                          <input
+                            type="text"
+                            placeholder="Feature name"
+                            value={feature.key}
+                            onChange={(e) => updateFeature(index, "key", e.target.value)}
+                            className="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400 text-sm"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Feature value"
+                            value={feature.value}
+                            onChange={(e) => updateFeature(index, "value", e.target.value)}
+                            className="flex-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400 text-sm"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeFeature(index)}
+                            className="p-2 hover:bg-red-500/10 rounded-lg text-gray-400 hover:text-red-400 transition-colors"
+                            title="Remove Feature"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="p-6 pt-4 border-t border-white/10">

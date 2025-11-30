@@ -58,7 +58,10 @@ import api, {
   alertAPI, 
   budgetAPI,
   userAPI,
-  subscriptionClientAPI
+  subscriptionClientAPI,
+  uploadAPI,
+  planAPI,
+  userPlanAPI
 } from "../utils/api";
 import { showToast } from "../utils/toast";
 import { toast } from "sonner";
@@ -154,7 +157,32 @@ const DashboardPage = () => {
     status: "pending",
     source: "upload"
   });
-
+  const [invoiceImageFile, setInvoiceImageFile] = useState(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  
+  // Settings form states
+  const [profileForm, setProfileForm] = useState({
+    name: "",
+    username: "",
+    email: "",
+    companyName: "",
+  });
+  const [passwordForm, setPasswordForm] = useState({
+    currentPassword: "",
+    newPassword: "",
+    confirmPassword: "",
+  });
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  
+  // Notification popup state
+  const [notificationQueue, setNotificationQueue] = useState([]);
+  const [previousAlertCount, setPreviousAlertCount] = useState(0);
+  
+  // Plan selection states
+  const [plans, setPlans] = useState([]);
+  const [userPlan, setUserPlan] = useState(null);
+  const [selectedPlanId, setSelectedPlanId] = useState(null);
+  const [selectingPlan, setSelectingPlan] = useState(false);
 
   const [budgetForm, setBudgetForm] = useState({
     monthlyCap: "",
@@ -165,7 +193,43 @@ const DashboardPage = () => {
   useEffect(() => {
     fetchUserData();
     fetchWorkspaces();
+    fetchPlans();
+    fetchMyPlan();
+    
+    // Check for Stripe checkout session in URL params
+    const urlParams = new URLSearchParams(window.location.search);
+    const sessionId = urlParams.get('session_id');
+    const planId = urlParams.get('planId');
+    const canceled = urlParams.get('canceled');
+    
+    if (canceled === 'true') {
+      showToast.warning("Payment Cancelled", "You cancelled the payment process.");
+      // Clean URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (sessionId && planId) {
+      // Confirm payment after successful checkout
+      confirmStripePayment(sessionId);
+      // Clean URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
   }, []);
+  
+  const confirmStripePayment = async (sessionId) => {
+    try {
+      const response = await userPlanAPI.confirmPayment({ sessionId });
+      if (response.data?.userPlan || response.data?.status === 200) {
+        const selectedPlan = response.data.userPlan;
+        setUserPlan(selectedPlan);
+        setSelectedPlanId(selectedPlan.planId?._id || selectedPlan.planId);
+        const planName = selectedPlan?.planId?.name || 'plan';
+        showToast.success("Payment Successful", `Your ${planName} subscription is now active!`);
+        await fetchMyPlan(); // Refresh plan data
+      }
+    } catch (error) {
+      console.error("Error confirming payment:", error);
+      showToast.error("Payment Confirmation Failed", error.response?.data?.message || error.message);
+    }
+  };
 
   useEffect(() => {
     if (currentWorkspace) {
@@ -200,11 +264,184 @@ const DashboardPage = () => {
     try {
       const response = await userAPI.getMe();
       setUser(response.data);
+      // Populate profile form
+      setProfileForm({
+        name: response.data.name || "",
+        username: response.data.username || "",
+        email: response.data.email || "",
+        companyName: response.data.companyName || "",
+      });
     } catch (error) {
       console.error("Error fetching user data:", error);
       if (error.response?.status === 401) {
         handleLogout();
       }
+    }
+  };
+
+  const updateProfile = async (e) => {
+    e.preventDefault();
+    try {
+      const response = await userAPI.update(profileForm);
+      if (response.data?.status === 201 || response.data?.user) {
+        const updatedUser = response.data?.user || { ...user, ...profileForm };
+        setUser(updatedUser);
+        showToast.success("Profile Updated", "Your profile has been updated successfully!");
+        await fetchUserData(); // Refresh user data
+      } else if (response.data?.message) {
+        showToast.error("Update Failed", response.data.message);
+      }
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      showToast.error("Error Updating Profile", error.response?.data?.message || error.message || "Failed to update profile");
+    }
+  };
+
+  const changePassword = async (e) => {
+    e.preventDefault();
+    
+    if (passwordForm.newPassword !== passwordForm.confirmPassword) {
+      showToast.error("Password Mismatch", "New password and confirm password do not match");
+      return;
+    }
+
+    if (passwordForm.newPassword.length < 8) {
+      showToast.error("Invalid Password", "Password must be at least 8 characters long");
+      return;
+    }
+
+    try {
+      const response = await userAPI.changePassword({
+        currentPassword: passwordForm.currentPassword,
+        newPassword: passwordForm.newPassword,
+      });
+      
+      if (response.data?.status === 200 || response.status === 200) {
+        showToast.success("Password Changed", "Your password has been changed successfully!");
+        setPasswordForm({
+          currentPassword: "",
+          newPassword: "",
+          confirmPassword: "",
+        });
+        setShowPasswordForm(false);
+      } else if (response.data?.message) {
+        showToast.error("Password Change Failed", response.data.message);
+      }
+    } catch (error) {
+      console.error("Error changing password:", error);
+      const errorMessage = error.response?.data?.message || error.message || "Failed to change password";
+      showToast.error("Error Changing Password", errorMessage);
+    }
+  };
+
+  const fetchPlans = async () => {
+    try {
+      const response = await planAPI.getAll();
+      setPlans(response.data || []);
+    } catch (error) {
+      console.error("Error fetching plans:", error);
+      setPlans([]);
+    }
+  };
+
+  const fetchMyPlan = async () => {
+    try {
+      const response = await userPlanAPI.getMyPlan();
+      if (response.data?.userPlan || response.data?.planId) {
+        const plan = response.data.userPlan || response.data;
+        setUserPlan(plan);
+        setSelectedPlanId(plan.planId?._id || plan.planId);
+      } else {
+        setUserPlan(null);
+      }
+    } catch (error) {
+      // 404 is OK - user might not have a plan yet
+      if (error.response?.status !== 404) {
+        console.error("Error fetching user plan:", error);
+      }
+      setUserPlan(null);
+    }
+  };
+
+  const selectUserPlan = async (planId) => {
+    if (selectingPlan) return; // Prevent multiple clicks
+    
+    setSelectingPlan(true);
+    try {
+      // First, try to create Stripe checkout session
+      const checkoutResponse = await userPlanAPI.createCheckoutSession({ planId });
+      
+      if (checkoutResponse.data?.url) {
+        // Redirect to Stripe checkout
+        window.location.href = checkoutResponse.data.url;
+        return;
+      }
+      
+      // If Stripe is not configured, fallback to mock payment
+      if (checkoutResponse.data?.useMockPayment || checkoutResponse.response?.status === 400) {
+        showToast.info("Using Demo Mode", "Stripe not configured. Using mock payment for demo.");
+        const response = await userPlanAPI.selectPlan({ planId });
+        if (response.data?.userPlan || response.data?.status === 201) {
+          const selectedPlan = response.data.userPlan;
+          setUserPlan(selectedPlan);
+          setSelectedPlanId(planId);
+          const planName = selectedPlan?.planId?.name || plans.find(p => p._id === planId)?.name || 'plan';
+          showToast.success("Plan Selected", `You have successfully selected the ${planName}!`);
+          await fetchMyPlan(); // Refresh plan data
+        }
+      } else if (checkoutResponse.data?.message) {
+        showToast.error("Checkout Failed", checkoutResponse.data.message);
+      }
+    } catch (error) {
+      console.error("Error selecting plan:", error);
+      console.error("Error details:", {
+        status: error.response?.status,
+        data: error.response?.data,
+        message: error.message
+      });
+      
+      // Check if it's a validation error
+      if (error.response?.status === 400 && error.response?.data?.errors) {
+        const validationErrors = error.response.data.errors.map(e => e.msg).join(", ");
+        showToast.error("Validation Error", validationErrors);
+        setSelectingPlan(false);
+        return;
+      }
+      
+      // Check if it's a Stripe configuration error
+      const isStripeNotConfigured = 
+        error.response?.status === 400 || 
+        error.response?.data?.useMockPayment ||
+        error.response?.data?.message?.includes("Stripe is not configured") ||
+        error.message?.includes("Stripe is not configured");
+      
+      // If Stripe checkout fails, try fallback to mock payment
+      if (isStripeNotConfigured) {
+        try {
+          showToast.info("Using Demo Mode", "Stripe not configured. Using mock payment for demo.");
+          const response = await userPlanAPI.selectPlan({ planId });
+          if (response.data?.userPlan || response.data?.status === 201) {
+            const selectedPlan = response.data.userPlan;
+            setUserPlan(selectedPlan);
+            setSelectedPlanId(planId);
+            const planName = selectedPlan?.planId?.name || plans.find(p => p._id === planId)?.name || 'plan';
+            showToast.success("Plan Selected", `You have successfully selected the ${planName}!`);
+            await fetchMyPlan();
+          } else {
+            showToast.error("Plan Selection Failed", response.data?.message || "Failed to select plan");
+          }
+        } catch (fallbackError) {
+          console.error("Fallback payment error:", fallbackError);
+          const errorMessage = fallbackError.response?.data?.message || fallbackError.message || "Failed to select plan";
+          showToast.error("Error Selecting Plan", errorMessage);
+        }
+      } else {
+        // Other errors - show error message
+        const errorMessage = error.response?.data?.message || error.response?.data?.error || error.message || "Failed to create checkout session";
+        showToast.error("Error Selecting Plan", errorMessage);
+      }
+    } finally {
+      setSelectingPlan(false);
     }
   };
 
@@ -370,6 +607,66 @@ const DashboardPage = () => {
     }
   };
   
+
+  const quickRenewal = async (subscription) => {
+    if (!subscription || !subscription._id) {
+      showToast.warning("No Selection", "No subscription selected.");
+      return;
+    }
+
+    try {
+      // Calculate new renewal date based on subscription period
+      const currentDate = subscription.nextRenewalDate 
+        ? new Date(subscription.nextRenewalDate) 
+        : new Date();
+      
+      let newRenewalDate = new Date(currentDate);
+      
+      if (subscription.period === 'yearly') {
+        newRenewalDate.setFullYear(newRenewalDate.getFullYear() + 1);
+      } else if (subscription.period === 'quarterly') {
+        newRenewalDate.setMonth(newRenewalDate.getMonth() + 3);
+      } else {
+        // monthly (default)
+        newRenewalDate.setMonth(newRenewalDate.getMonth() + 1);
+      }
+
+      const formData = {
+        ...subscription,
+        nextRenewalDate: newRenewalDate.toISOString().split('T')[0],
+      };
+
+      const response = await subscriptionAPI.update(subscription._id, formData);
+      if (response.data.subscription) {
+        setSubscriptions((prev) =>
+          prev.map((sub) =>
+            sub._id === subscription._id ? response.data.subscription : sub
+          )
+        );
+        showToast.success(
+          "Renewal Extended", 
+          `${subscription.name} renewal date extended to ${newRenewalDate.toLocaleDateString()}`
+        );
+        
+        // Refresh alerts
+        try {
+          if (currentWorkspace) {
+            const alertResponse = await alertAPI.getByWorkspace(currentWorkspace._id);
+            setAlerts(alertResponse.data || []);
+          }
+          await alertAPI.triggerChecks();
+        } catch (error) {
+          console.error("Error refreshing alerts:", error);
+        }
+      }
+    } catch (error) {
+      console.error("Error extending renewal:", error);
+      showToast.error(
+        "Error Extending Renewal",
+        error.response?.data?.message || error.message
+      );
+    }
+  };
 
   const updateSubscription = async (e) => {
     e.preventDefault();
@@ -643,11 +940,44 @@ const DashboardPage = () => {
     });
   };
 
+  const handleImageUpload = async (file) => {
+    if (!file) return null;
+    
+    setUploadingImage(true);
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      
+      const response = await uploadAPI.uploadInvoiceImage(formData);
+      if (response.data?.data?.fileUrl) {
+        setInvoiceForm(prev => ({ ...prev, fileUrl: response.data.data.fileUrl }));
+        showToast.success("Image Uploaded", "Invoice image uploaded successfully!");
+        return response.data.data.fileUrl;
+      }
+    } catch (error) {
+      console.error("Error uploading image:", error);
+      showToast.error("Upload Failed", error.response?.data?.message || "Failed to upload image");
+      return null;
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
   const createInvoice = async (e) => {
     e.preventDefault();
     try {
+      // Upload image first if a file is selected
+      let fileUrl = invoiceForm.fileUrl;
+      if (invoiceImageFile && !fileUrl) {
+        fileUrl = await handleImageUpload(invoiceImageFile);
+        if (!fileUrl) {
+          return; // Stop if upload failed
+        }
+      }
+
       const formData = {
         ...invoiceForm,
+        fileUrl: fileUrl || invoiceForm.fileUrl,
         amount: Number(invoiceForm.amount),
         invoiceDate: new Date(invoiceForm.invoiceDate).toISOString()
       };
@@ -658,6 +988,7 @@ const DashboardPage = () => {
         showToast.success("Invoice Created", "Invoice has been added successfully!");
         setShowInvoiceForm(false);
         resetInvoiceForm();
+        setInvoiceImageFile(null);
         fetchWorkspaceData(); // Refresh to get updated list
       }
     } catch (error) {
@@ -796,6 +1127,7 @@ const DashboardPage = () => {
       subscriptionId: "", fileUrl: "", amount: "", invoiceDate: new Date().toISOString().split('T')[0],
       status: "pending", source: "upload"
     });
+    setInvoiceImageFile(null);
   };
 
 
@@ -1028,6 +1360,7 @@ const categoryData = React.useMemo(() => {
     { id: "invoices", icon: FileText, label: "Invoices", badge: invoices.length },
     { id: "alerts", icon: Bell, label: "Alerts", badge: alerts.length },
     { id: "budgets", icon: Shield, label: "Budgets", badge: null },
+    { id: "settings", icon: Settings, label: "Settings", badge: null },
   ];
 
   if (loading) {
@@ -1046,7 +1379,7 @@ const categoryData = React.useMemo(() => {
   }
   
   return (
-    <div className="flex min-h-screen bg-black overflow-hidden pt-16">
+    <div className="flex min-h-screen bg-black overflow-x-hidden pt-16">
       <style>{`
         select option {
           background-color: #1a1a1a;
@@ -1056,10 +1389,29 @@ const categoryData = React.useMemo(() => {
         select option:checked {
           background-color: #7c3aed;
         }
+        @media (max-width: 1024px) {
+          .sidebar-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 30;
+          }
+        }
       `}</style>
     
+      {/* Mobile overlay for sidebar */}
+      {sidebarOpen && (
+        <div 
+          className="sidebar-overlay lg:hidden" 
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+    
       {/* Sidebar */}
-      <aside className={`${sidebarOpen ? "w-72" : "w-20"} fixed lg:sticky top-16 bottom-0 left-0 z-40 bg-gradient-to-b from-black to-purple-900/5 border-r border-white/10 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden`}>
+      <aside className={`${sidebarOpen ? "w-72" : "w-20"} fixed lg:sticky top-16 bottom-0 left-0 z-40 bg-gradient-to-b from-black to-purple-900/5 border-r border-white/10 backdrop-blur-xl transition-all duration-300 ease-in-out overflow-hidden ${!sidebarOpen ? "-translate-x-full lg:translate-x-0" : ""}`}>
         <div className="flex flex-col h-full">
           <div className="flex items-center justify-between p-6 border-b border-white/10">
             <button onClick={() => setSidebarOpen(!sidebarOpen)} className="w-10 h-10 bg-gradient-to-br from-purple-600 via-purple-500 to-pink-600 rounded-xl flex items-center justify-center shadow-lg shadow-purple-600/50 hover:scale-105 transition-transform">
@@ -1127,6 +1479,7 @@ const categoryData = React.useMemo(() => {
                   {activeTab === "invoices" && "Invoice Management"}
                   {activeTab === "alerts" && "Alert Center"}
                   {activeTab === "budgets" && "Budget Management"}
+                  {activeTab === "settings" && "User Settings"}
                 </h2>
                 <p className="text-xs text-gray-400">
                   {activeTab === "dashboard" && "Complete overview of your subscription ecosystem"}
@@ -1136,6 +1489,7 @@ const categoryData = React.useMemo(() => {
                   {activeTab === "invoices" && "Track and manage all invoices"}
                   {activeTab === "alerts" && "Monitor and manage subscription alerts"}
                   {activeTab === "budgets" && "Set and monitor spending limits"}
+                  {activeTab === "settings" && "Manage your profile and account settings"}
                 </p>
               </div>
             </div>
@@ -1687,6 +2041,15 @@ const categoryData = React.useMemo(() => {
                           {renewalStatus.status}
                         </span>
                         <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {sub.nextRenewalDate && (
+                            <button 
+                              onClick={() => quickRenewal(sub)}
+                              className="p-2 hover:bg-white/10 rounded-lg text-gray-400 hover:text-purple-400 transition-colors"
+                              title="Quick Renewal"
+                            >
+                              <RefreshCw className="w-4 h-4" />
+                            </button>
+                          )}
                           <button 
                             onClick={() => {
                               setSelectedSubscriptionForClients(sub);
@@ -2083,7 +2446,7 @@ const categoryData = React.useMemo(() => {
                     <p className="text-gray-500 mb-4">Alerts will automatically appear here for:</p>
                     <ul className="text-gray-400 text-sm space-y-1 mb-4">
                       <li>• Budget threshold reached or exceeded</li>
-                      <li>• Subscription renewals (7, 5, 4, 3, 2, 1 days before)</li>
+                      <li>• Subscription renewals</li>
                     </ul>
                     <button
                       onClick={async () => {
@@ -2250,6 +2613,225 @@ const categoryData = React.useMemo(() => {
                         </button>
                       </div>
                     </form>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Settings Tab */}
+          {activeTab === "settings" && (
+            <div className="space-y-6">
+              {/* Profile Settings */}
+              <div className="bg-black/40 rounded-2xl p-6 border border-white/10 backdrop-blur-xl">
+                <div className="mb-6">
+                  <h3 className="text-2xl font-bold text-white">Profile Settings</h3>
+                  <p className="text-sm text-gray-400">Update your personal information</p>
+                </div>
+                <form onSubmit={updateProfile} className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Full Name *</label>
+                      <input
+                        type="text"
+                        value={profileForm.name}
+                        onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400"
+                        required
+                        minLength={6}
+                        maxLength={35}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Username *</label>
+                      <input
+                        type="text"
+                        value={profileForm.username}
+                        onChange={(e) => setProfileForm({ ...profileForm, username: e.target.value })}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400"
+                        required
+                        minLength={6}
+                        maxLength={35}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Email *</label>
+                      <input
+                        type="email"
+                        value={profileForm.email}
+                        onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Company Name</label>
+                      <input
+                        type="text"
+                        value={profileForm.companyName}
+                        onChange={(e) => setProfileForm({ ...profileForm, companyName: e.target.value })}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-3 pt-4">
+                    <button type="submit" className="px-6 py-2 btn-gradient">
+                      <Save className="w-4 h-4 inline mr-2" />
+                      Save Changes
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* Password Settings */}
+              <div className="bg-black/40 rounded-2xl p-6 border border-white/10 backdrop-blur-xl">
+                <div className="mb-6">
+                  <h3 className="text-2xl font-bold text-white">Change Password</h3>
+                  <p className="text-sm text-gray-400">Update your account password</p>
+                </div>
+                {!showPasswordForm ? (
+                  <button
+                    onClick={() => setShowPasswordForm(true)}
+                    className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-lg font-semibold transition-all"
+                  >
+                    Change Password
+                  </button>
+                ) : (
+                  <form onSubmit={changePassword} className="space-y-4">
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Current Password *</label>
+                      <input
+                        type="password"
+                        value={passwordForm.currentPassword}
+                        onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">New Password *</label>
+                      <input
+                        type="password"
+                        value={passwordForm.newPassword}
+                        onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400"
+                        required
+                        minLength={8}
+                        placeholder="At least 8 characters"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Confirm New Password *</label>
+                      <input
+                        type="password"
+                        value={passwordForm.confirmPassword}
+                        onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
+                        className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400"
+                        required
+                        minLength={8}
+                      />
+                    </div>
+                    <div className="flex gap-3 pt-4">
+                      <button type="submit" className="px-6 py-2 btn-gradient">
+                        <Save className="w-4 h-4 inline mr-2" />
+                        Update Password
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowPasswordForm(false);
+                          setPasswordForm({
+                            currentPassword: "",
+                            newPassword: "",
+                            confirmPassword: "",
+                          });
+                        }}
+                        className="px-6 py-2 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-lg font-semibold transition-all"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
+              </div>
+
+              {/* Plan Selection */}
+              <div className="bg-black/40 rounded-2xl p-6 border border-white/10 backdrop-blur-xl">
+                <div className="mb-6">
+                  <h3 className="text-2xl font-bold text-white">Subscription Plan</h3>
+                  <p className="text-sm text-gray-400">Select or change your subscription plan</p>
+                </div>
+                
+                {userPlan && (
+                  <div className="mb-6 p-4 bg-purple-600/20 border border-purple-600/30 rounded-xl">
+                    <p className="text-sm text-gray-400 mb-1">Current Plan</p>
+                    <p className="text-xl font-bold text-white">
+                      {userPlan.planId?.name || 'Unknown Plan'}
+                    </p>
+                    <p className="text-sm text-purple-400 mt-1">
+                      ${userPlan.planId?.price || 0}/month
+                    </p>
+                  </div>
+                )}
+
+                {plans.length === 0 ? (
+                  <div className="text-center py-8">
+                    <Package className="w-12 h-12 text-gray-600 mx-auto mb-3" />
+                    <p className="text-gray-400 text-sm">No plans available</p>
+                    <p className="text-gray-500 text-xs mt-1">Contact admin to create plans</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {plans.map((plan) => {
+                      const isCurrentPlan = userPlan?.planId?._id === plan._id || userPlan?.planId === plan._id;
+                      
+                      return (
+                        <div
+                          key={plan._id}
+                          className={`p-6 rounded-xl border transition-all flex flex-col ${
+                            isCurrentPlan
+                              ? 'bg-purple-600/20 border-purple-600/50'
+                              : 'bg-white/5 border-white/10 hover:border-purple-600/30 hover:bg-white/10'
+                          }`}
+                        >
+                          <div className="mb-4">
+                            <h4 className="text-xl font-bold text-white mb-2">{plan.name}</h4>
+                            <div className="flex items-baseline space-x-2">
+                              <span className="text-3xl font-bold text-purple-400">${plan.price}</span>
+                              <span className="text-gray-400">/month</span>
+                            </div>
+                          </div>
+                          
+                          {plan.featuresJSON && Object.keys(plan.featuresJSON).length > 0 && (
+                            <div className="mb-4 space-y-2 flex-1">
+                              <p className="text-xs text-gray-400 mb-2 font-semibold">Features:</p>
+                              <ul className="space-y-2">
+                                {Object.entries(plan.featuresJSON).slice(0, 5).map(([key, value]) => (
+                                  <li key={key} className="flex items-start space-x-2 text-sm text-gray-300">
+                                    <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
+                                    <span className="flex-1">{key}: {String(value)}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+
+                          <button
+                            onClick={() => selectUserPlan(plan._id)}
+                            disabled={isCurrentPlan || selectingPlan}
+                            className={`w-full py-2.5 rounded-lg font-semibold transition-all mt-auto ${
+                              isCurrentPlan
+                                ? 'bg-purple-600/30 text-purple-300 cursor-not-allowed border border-purple-600/30'
+                                : selectingPlan
+                                ? 'bg-gray-600/30 text-gray-400 cursor-not-allowed'
+                                : 'btn-gradient hover:scale-105'
+                            }`}
+                          >
+                            {isCurrentPlan ? 'Current Plan' : selectingPlan ? 'Processing...' : 'Select Plan'}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -2671,14 +3253,46 @@ const categoryData = React.useMemo(() => {
                   )}
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-400 mb-2">File URL</label>
-                  <input 
-                    type="text" 
-                    placeholder="File URL" 
-                    value={invoiceForm.fileUrl} 
-                    onChange={(e) => setInvoiceForm({...invoiceForm, fileUrl: e.target.value})} 
-                    className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400" 
-                  />
+                  <label className="block text-sm text-gray-400 mb-2">Invoice Image</label>
+                  <div className="space-y-2">
+                    <input 
+                      type="file" 
+                      accept="image/*,application/pdf"
+                      onChange={(e) => {
+                        const file = e.target.files[0];
+                        if (file) {
+                          setInvoiceImageFile(file);
+                          // Auto-upload when file is selected
+                          handleImageUpload(file);
+                        }
+                      }}
+                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-purple-600/20 file:text-purple-400 hover:file:bg-purple-600/30 file:cursor-pointer"
+                      disabled={uploadingImage}
+                    />
+                    {uploadingImage && (
+                      <p className="text-xs text-purple-400">Uploading image...</p>
+                    )}
+                    {invoiceForm.fileUrl && (
+                      <div className="mt-2">
+                        <p className="text-xs text-gray-400 mb-1">Current file:</p>
+                        <a 
+                          href={invoiceForm.fileUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-xs text-purple-400 hover:text-purple-300 underline truncate block"
+                        >
+                          {invoiceForm.fileUrl}
+                        </a>
+                      </div>
+                    )}
+                    <input 
+                      type="text" 
+                      placeholder="Or enter file URL manually" 
+                      value={invoiceForm.fileUrl} 
+                      onChange={(e) => setInvoiceForm({...invoiceForm, fileUrl: e.target.value})} 
+                      className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder-gray-400 text-sm" 
+                    />
+                  </div>
                 </div>
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">Amount ($) *</label>

@@ -23,6 +23,45 @@ const getUserByUsername = async (req, res) => {
   });
 };
 
+const changePassword = async (req, res) => {
+  const resData = {};
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ message: "Current password and new password are required" });
+  }
+
+  try {
+    const user = await User.findById(req.userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Verify current password
+    const bcrypt = await import("bcryptjs");
+    const isPasswordValid = await bcrypt.default.compare(currentPassword, user.passwordHash);
+    if (!isPasswordValid) {
+      return res.status(400).json({ message: "Current password is incorrect" });
+    }
+
+    // Validate new password length
+    if (newPassword.length < 8) {
+      return res.status(400).json({ message: "New password must be at least 8 characters long" });
+    }
+
+    // Hash and update password
+    const newPasswordHash = await bcrypt.default.hash(newPassword, 10);
+    await User.findByIdAndUpdate(req.userId, { passwordHash: newPasswordHash });
+
+    resData.status = 200;
+    resData.message = "Password changed successfully";
+    return res.json(resData);
+  } catch (e) {
+    console.error("Error changing password:", e);
+    return res.status(500).json({ message: "Failed to change password" });
+  }
+};
+
 const updateUser = async (req, res) => {
   const resData = {};
   const data = { ...req.body };
@@ -64,15 +103,16 @@ const updateUser = async (req, res) => {
       }
 
       const usernameCheck = await User.findOne({ username: username_get });
-      if (usernameCheck) {
+      if (usernameCheck && usernameCheck._id.toString() !== req.userId) {
         resData.message = "Username already exists";
         return res.json(resData);
       }
+    }
 
-      if(req.userId !== usernameCheck?._id.toString()) {
-        resData.message = "You can not change to this username";
-        return res.json(resData);
-      }
+    // Don't allow password updates through this endpoint (use changePassword instead)
+    if (data.password || data.passwordHash) {
+      delete data.password;
+      delete data.passwordHash;
     }
 
     const u = await User.findByIdAndUpdate(req.userId, data, {
@@ -82,6 +122,7 @@ const updateUser = async (req, res) => {
     if (u) {
       resData.status = 201;
       resData.message = "User Updated Successfully";
+      resData.user = u;
     } else {
       resData.status = 400;
       resData.message = "Error for Updating Data";
@@ -89,6 +130,7 @@ const updateUser = async (req, res) => {
     return res.json(resData);
   } catch (e) {
     console.error("Error updating user:", e);
+    return res.status(500).json({ message: "Failed to update user" });
   }
 };
 
@@ -247,6 +289,7 @@ export default {
   getMe,
   getUserByUsername,
   updateUser,
+  changePassword,
   searchUsers,
   getAllUsers,
   createUser,

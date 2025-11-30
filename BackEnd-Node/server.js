@@ -18,6 +18,7 @@ import subscriptionClientRoutes from "./routes/subscriptionClients.js";
 import alertRoutes from "./routes/alerts.js";
 import invoiceRoutes from "./routes/invoices.js";
 import userPlanRoutes from "./routes/userPlans.js";
+import uploadRoutes from "./routes/upload.js";
 
 dotenv.config();
 
@@ -45,6 +46,7 @@ app.use("/api/subscriptionClients", subscriptionClientRoutes);
 app.use("/api/alerts", alertRoutes);
 app.use("/api/invoices", invoiceRoutes);
 app.use("/api/userPlans", userPlanRoutes);
+app.use("/api/upload", uploadRoutes);
 
 const PORT = process.env.PORT;
 

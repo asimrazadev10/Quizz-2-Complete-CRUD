@@ -4,6 +4,32 @@ import upc from "../controllers/userPlanController.js";
 import { authenticate } from "../middleware/auth.js";
 import { body } from "express-validator";
 
+// Stripe checkout session creation
+router.post(
+  "/create-checkout-session",
+  authenticate,
+  [body("planId").isMongoId()],
+  upc.createCheckoutSession
+);
+
+// Confirm payment after successful checkout
+router.post(
+  "/confirm-payment",
+  authenticate,
+  [body("sessionId").isString().notEmpty()],
+  upc.confirmPayment
+);
+
+// Simplified plan selection (for demo/mock payment - fallback)
+router.post(
+  "/select",
+  authenticate,
+  [body("planId").isMongoId()],
+  upc.selectPlan
+);
+router.get("/my-plan", authenticate, upc.getMyPlan);
+
+// Admin/Full Stripe integration endpoints
 router.post(
   "/assign",
   authenticate,

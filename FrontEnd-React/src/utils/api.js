@@ -83,6 +83,17 @@ export const invoiceAPI = {
   delete: (id) => api.delete(`/invoices/${id}`),
 };
 
+// Upload API
+export const uploadAPI = {
+  uploadInvoiceImage: (formData) => {
+    return api.post("/upload/invoice", formData, {
+      headers: {
+        "Content-Type": "multipart/form-data",
+      },
+    });
+  },
+};
+
 // Alert API - FIX: Remove redundant path segments
 export const alertAPI = {
   create: (data) => api.post("/alerts/", data),
@@ -113,7 +124,9 @@ export const subscriptionClientAPI = {
 // User API
 export const userAPI = {
   getMe: () => api.get("/users/me"),
-  update: (username, data) => api.put(`/users/${username}`, data),
+  update: (data) => api.put("/users/me", data),
+  changePassword: (data) => api.post("/users/me/change-password", data),
+  updateByUsername: (username, data) => api.put(`/users/${username}`, data),
   search: (query) => api.get(`/users/search?q=${query}`),
   getByUsername: (username) => api.get(`/users/${username}`),
   // Admin endpoints
@@ -130,6 +143,15 @@ export const planAPI = {
   create: (data) => api.post("/plans/createPlan", data),
   update: (id, data) => api.put(`/plans/updatePlan/${id}`, data),
   delete: (id) => api.delete(`/plans/deletePlan/${id}`),
+};
+
+// User Plan API
+export const userPlanAPI = {
+  createCheckoutSession: (data) => api.post("/userPlans/create-checkout-session", data),
+  confirmPayment: (data) => api.post("/userPlans/confirm-payment", data),
+  selectPlan: (data) => api.post("/userPlans/select", data), // Fallback for mock payment
+  getMyPlan: () => api.get("/userPlans/my-plan"),
+  getUserPlan: (userId) => api.get(`/userPlans/plan/${userId}`),
 };
 
 export default api;

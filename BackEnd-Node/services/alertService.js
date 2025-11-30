@@ -1,6 +1,9 @@
 import Alert from "../models/Alert.js";
 import Budget from "../models/Budget.js";
 import Subscription from "../models/Subscription.js";
+import User from "../models/User.js";
+import Workspace from "../models/Workspace.js";
+import emailService from "./emailService.js";
 
 /**
  * Calculate total monthly spending for a workspace
@@ -110,7 +113,7 @@ const checkBudgetAlerts = async () => {
 
         if (!existingAlert) {
           // Create budget exceeded alert
-          await Alert.create({
+          const newAlert = await Alert.create({
             subscriptionId: referenceSubscription._id,
             type: "budget",
             dueDate: new Date(), // Set to current time
@@ -118,6 +121,22 @@ const checkBudgetAlerts = async () => {
           });
           
           console.log(`✅ Budget EXCEEDED alert created for workspace ${budget.workspaceId}. Spending: ${monthlySpending}, Cap: ${budget.monthlyCap}`);
+          
+          // Send email notification
+          try {
+            const workspace = await Workspace.findById(budget.workspaceId);
+            if (workspace) {
+              const user = await User.findById(workspace.ownerId);
+              if (user && user.email) {
+                await emailService.sendAlertEmail(user, newAlert, referenceSubscription);
+                // Update alert sentAt
+                await Alert.findByIdAndUpdate(newAlert._id, { sentAt: new Date() });
+              }
+            }
+          } catch (emailError) {
+            console.error("Error sending email notification:", emailError);
+            // Don't fail alert creation if email fails
+          }
         }
       }
       // Check if budget threshold is reached (but not exceeded)
@@ -135,7 +154,7 @@ const checkBudgetAlerts = async () => {
           });
 
           if (!existingAlert) {
-            await Alert.create({
+            const newAlert = await Alert.create({
               subscriptionId: referenceSubscription._id,
               type: "budget",
               dueDate: new Date(),
@@ -143,6 +162,22 @@ const checkBudgetAlerts = async () => {
             });
             
             console.log(`✅ Budget threshold alert created for workspace ${budget.workspaceId}. Usage: ${budgetUsage.toFixed(2)}%`);
+            
+            // Send email notification
+            try {
+              const workspace = await Workspace.findById(budget.workspaceId);
+              if (workspace) {
+                const user = await User.findById(workspace.ownerId);
+                if (user && user.email) {
+                  await emailService.sendAlertEmail(user, newAlert, referenceSubscription);
+                  // Update alert sentAt
+                  await Alert.findByIdAndUpdate(newAlert._id, { sentAt: new Date() });
+                }
+              }
+            } catch (emailError) {
+              console.error("Error sending email notification:", emailError);
+              // Don't fail alert creation if email fails
+            }
           }
         }
       }
@@ -262,7 +297,7 @@ const checkDeadlineAlerts = async () => {
 
         if (!existingAlert) {
           // Create renewal alert with the renewal date as dueDate
-          await Alert.create({
+          const newAlert = await Alert.create({
             subscriptionId: subscription._id,
             type: "renewal",
             dueDate: renewalDate,
@@ -270,6 +305,22 @@ const checkDeadlineAlerts = async () => {
           });
           
           console.log(`✅ Renewal alert created for subscription ${subscription.name}. Renewal in ${daysUntil} day${daysUntil > 1 ? 's' : ''} (${renewalDate.toISOString()})`);
+          
+          // Send email notification
+          try {
+            const workspace = await Workspace.findById(subscription.workspaceId);
+            if (workspace) {
+              const user = await User.findById(workspace.ownerId);
+              if (user && user.email) {
+                await emailService.sendAlertEmail(user, newAlert, subscription);
+                // Update alert sentAt
+                await Alert.findByIdAndUpdate(newAlert._id, { sentAt: new Date() });
+              }
+            }
+          } catch (emailError) {
+            console.error("Error sending email notification:", emailError);
+            // Don't fail alert creation if email fails
+          }
         } else {
           console.log(`⏭️  Alert already exists for subscription ${subscription.name} (${daysUntil} days)`);
         }
